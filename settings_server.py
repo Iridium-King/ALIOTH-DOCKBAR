@@ -938,6 +938,16 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "No config manager"}, 500)
             return
 
+        elif path == "/api/add_clock_dock":
+            if _config_mgr_ref:
+                _config_mgr_ref.add_item({"type": "clock", "name": payload.get("name") or "Reloj"})
+                if _on_applied_ref:
+                    _on_applied_ref()
+                self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+            else:
+                self._send_json({"error": "No config manager"}, 500)
+            return
+
         self.send_error(404, "Unknown API endpoint")
 
 

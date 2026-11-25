@@ -7,6 +7,7 @@ Fully customizable: size/scale, width, opacity, custom colors, font family/size/
 button position (right/left/center/split), visual style, and vertical gap over Dockbar.
 """
 import ctypes
+from ctypes import wintypes
 import json
 import subprocess
 import threading
@@ -296,15 +297,29 @@ class MediaCapsule:
             if self.canvas:
                 self.canvas.config(width=w, height=h)
 
+    def _is_cursor_inside(self):
+        if not self.hwnd or not user32.IsWindowVisible(self.hwnd):
+            return False
+        try:
+            pt = ctypes.wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            return (self.win_x - 2 <= pt.x <= self.win_x + self.cur_w + 2) and (self.win_y - 2 <= pt.y <= self.win_y + self.cur_h + 2)
+        except Exception:
+            return False
+
     def sync_z_order(self, revealed, anchor=0):
         if not self.hwnd or not user32.IsWindow(self.hwnd):
             return
         try:
-            if revealed or self._hover_inside or not anchor:
+            # Self-heal stale hover flag using live Win32 cursor coordinates
+            live_hover = self._is_cursor_inside()
+            self._hover_inside = live_hover
+            if revealed or live_hover or not anchor:
                 user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
             else:
+                # Strictly drop TOPMOST and place directly behind open app anchor (never lingers over apps!)
                 user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-                user32.SetWindowPos(self.hwnd, int(anchor), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                user32.SetWindowPos(self.hwnd, int(anchor), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         except Exception:
             pass
 

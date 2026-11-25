@@ -78,7 +78,12 @@ DEFAULT_CONFIG = {
         "indicator_style": "dot",            # "dot", "pill", "line", "ring", "diamond"
         "indicator_color": "#60a5fa",
         "indicator_size": 6,                 # Base indicator size (3 to 12 px)
-        "dock_battery_style": "ring"         # "ring", "bar", "pill", "minimal"
+        "dock_battery_style": "ring",        # "ring", "bar", "pill", "minimal"
+        "dock_clock_style": "digital",       # "digital", "analog", "neon", "minimal", "pill"
+        "dock_clock_24h": True,
+        "dock_clock_seconds": False,
+        "dock_clock_show_date": True,
+        "dock_clock_color": "#f8fafc"
     },
     "widgets": {
         "clock": {

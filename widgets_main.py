@@ -168,9 +168,9 @@ def main():
                 state["empty_since"] = 0.0
         except Exception as e:
             print(f"[Alioth Widgets] Watch error: {e}")
-        root.after(220, _watch_loop)
+        root.after(140, _watch_loop)
 
-    root.after(220, _watch_loop)
+    root.after(140, _watch_loop)
     try:
         root.mainloop()
     except Exception:

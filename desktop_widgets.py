@@ -16,7 +16,7 @@ from window_utils import (
     set_tool_window, update_layered_pil, release_layered_surface,
     flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse,
     alpha_line, resolve_styled_font, find_lowest_app_above_desktop,
-    get_battery_status,
+    get_battery_status, is_hwnd_behind, get_blurred_desktop_backdrop,
 )
 
 user32 = ctypes.windll.user32
@@ -625,11 +625,11 @@ class BaseDesktopWidget:
         self._card_bg_cache = None
         self._last_z_state = None
 
-    def _apply_z_order(self, lowest_app_override=None, exclude_hwnds=()):
+    def _apply_z_order(self, lowest_app_override=None, desk_cover_override=None, exclude_hwnds=()):
         """
         Places pinned desktop widgets strictly BELOW open normal app windows AND strictly ABOVE
         Windows 11's raised WorkerW Show-Desktop sheet (so Taskbar Show Desktop, Dockbar Show Desktop,
-        and Win+D NEVER hide desktop widgets!).
+        and Win+D NEVER hide Clock, Battery, To-Do, or any other desktop widget!).
         """
         if not self.window or not self.window.winfo_exists():
             return
@@ -640,26 +640,32 @@ class BaseDesktopWidget:
                 self._last_z_state = None
             pinned = self.get_cfg("pinned_to_desktop", True)
             if not pinned:
-                if self._last_z_state != ("floating_top", 0):
+                if self._last_z_state != ("floating_top", 0) or (desk_cover_override and is_hwnd_behind(hwnd, desk_cover_override)):
                     user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
                     self._last_z_state = ("floating_top", 0)
                 return
 
             if lowest_app_override is None:
                 excl = set(exclude_hwnds or ()) | {int(hwnd)}
-                lowest_app, _ = find_lowest_app_above_desktop(exclude_hwnds=excl)
+                lowest_app, desk_cover = find_lowest_app_above_desktop(exclude_hwnds=excl)
             else:
                 lowest_app = lowest_app_override
+                desk_cover = desk_cover_override
+
+            behind_desk = bool(desk_cover and is_hwnd_behind(hwnd, desk_cover))
+            if behind_desk:
+                self._last_z_state = None
 
             if lowest_app:
                 state_sig = ("below_app", int(lowest_app))
-                if self._last_z_state != state_sig:
+                if self._last_z_state != state_sig or behind_desk:
                     user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
                     user32.SetWindowPos(hwnd, int(lowest_app), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
                     self._last_z_state = state_sig
             else:
-                # Empty desktop or Windows 'Mostrar escritorio' (raised WorkerW): keep visible!
-                if self._last_z_state != ("desktop_top", 0):
+                # Empty desktop or Windows 'Mostrar escritorio' (raised WorkerW): ALWAYS ensure widget stays above WorkerW!
+                has_topmost = bool(user32.GetWindowLongW(hwnd, -20) & 0x00000008)
+                if self._last_z_state != ("desktop_top", 0) or behind_desk or not has_topmost:
                     user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
                     self._last_z_state = ("desktop_top", 0)
         except Exception:
@@ -3274,16 +3280,41 @@ class BatteryWidget(BaseDesktopWidget):
                 pass
         self.update_job = self.root.after(4000, self._update_stats)
 
-    @staticmethod
-    def _composite_frosted_track(composite, draw_fn, blur_r=2.0):
-        """Draws the empty/spent gauge background onto a softly blurred frosted-glass layer so wallpaper never bleeds through."""
-        layer = Image.new("RGBA", composite.size, (0, 0, 0, 0))
-        ld = ImageDraw.Draw(layer, "RGBA")
-        draw_fn(ld)
-        blurred = layer.filter(ImageFilter.GaussianBlur(radius=blur_r))
-        composite.alpha_composite(blurred)
-        # Subtle sharp frosted edge on top for clean definition
-        composite.alpha_composite(layer)
+    def _composite_frosted_track(self, composite, draw_fn, blur_r=4.5):
+        """
+        Draws the empty/spent portion of the battery graph with HEAVY real optical frosted-glass blur
+        sampled from the desktop wallpaper beneath the widget + smoked acrylic frosting (never see-through!).
+        """
+        w, h = composite.size
+        mask = Image.new("L", (w, h), 0)
+        md = ImageDraw.Draw(mask)
+        draw_fn(md)
+
+        # Build heavy-blurred frosted optical glass fill
+        wx = self.window.winfo_x() if (self.window and self.window.winfo_exists()) else int(self.get_cfg("x", self.default_x))
+        wy = self.window.winfo_y() if (self.window and self.window.winfo_exists()) else int(self.get_cfg("y", self.default_y))
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        wp_blur = get_blurred_desktop_backdrop(wx, wy, w, h, sw, sh, blur_radius=20)
+        if wp_blur is not None:
+            # Blend heavily-blurred wallpaper with cool frosted acrylic tint so icons/wallpaper never bleed sharply
+            frost_veil = Image.new("RGBA", (w, h), (16, 26, 44, 150))
+            frosted_fill = Image.alpha_composite(wp_blur, frost_veil)
+            # Soft frosted light sheen on top
+            sheen = Image.new("RGBA", (w, h), (226, 232, 240, 38))
+            frosted_fill = Image.alpha_composite(frosted_fill, sheen)
+        else:
+            frosted_fill = Image.new("RGBA", (w, h), (30, 41, 59, 238))
+
+        # Apply soft feathered mask edge + composite frosted glass strictly into the spent track shape
+        soft_mask = mask.filter(ImageFilter.GaussianBlur(radius=max(1.2, blur_r * 0.45)))
+        glow_layer = Image.new("RGBA", (w, h), (15, 23, 42, 115))
+        glow_layer.putalpha(soft_mask)
+        composite.alpha_composite(glow_layer)
+
+        # Crisp opaque frosted-blurred track clipped to exact shape
+        frosted_fill.putalpha(mask)
+        composite.alpha_composite(frosted_fill)
 
     def _render(self):
         if not self.window or not self.window.winfo_exists():
@@ -3322,8 +3353,10 @@ class BatteryWidget(BaseDesktopWidget):
         s = min(w / 246.0, h / 102.0) if self.get_cfg("custom_w") else self._get_effective_scale()
         w_style = self.get_cfg("widget_style", "cristal") or "cristal"
         show_sub = bool(self.get_cfg("show_status_text", True))
+        wx_cur = self.window.winfo_x() if (self.window and self.window.winfo_exists()) else 0
+        wy_cur = self.window.winfo_y() if (self.window and self.window.winfo_exists()) else 0
         sig = (
-            w, h, has_bat, pct, charging, saver, life_min, style, accent_rgb, show_sub,
+            w, h, wx_cur, wy_cur, has_bat, pct, charging, saver, life_min, style, accent_rgb, show_sub,
             w_style, self.get_cfg("opacity", 0.88), self.get_cfg("bg_color", ""),
             self.get_cfg("bg_image", ""), self.get_cfg("font_family", ""),
             self.get_cfg("font_scale", 1.0), bool(self._hover_inside),
@@ -3366,9 +3399,10 @@ class BatteryWidget(BaseDesktopWidget):
         f_sub = self._get_styled_font(max(9, int(10.5 * s)), bold_default=False)
         f_badge = self._get_styled_font(max(8, int(9 * s)), bold_default=True)
 
-        # Frosted dark-slate smoked tint for empty/spent track regions (non-transparent, blurred)
-        frosted_base = (15, 23, 42, 215)
-        frosted_sheen = (100, 116, 139, 95)
+        # Update every style's frosted-track mask calls to pass solid 255 to mask ImageDraw
+        # Frosted dark-slate outline highlight for spent track regions
+        frosted_base = 255
+        frosted_sheen = 255
 
         if style == "barra":
             tx = pad
@@ -3405,11 +3439,11 @@ class BatteryWidget(BaseDesktopWidget):
             th = max(8, int(10 * s))
             self._composite_frosted_track(
                 composite,
-                lambda ld: ld.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=(22, 32, 52, 225), width=th + 2),
-                blur_r=2.2,
+                lambda ld: ld.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=255, width=th + 2),
+                blur_r=4.0,
             )
             draw = ImageDraw.Draw(composite, "RGBA")
-            draw.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=(100, 116, 139, 120), width=th)
+            draw.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=(226, 232, 240, 42), width=th)
             span = int(180 * (pct / 100.0))
             if span > 0:
                 draw.arc([ax1, ay1, ax2, ay2], start=180, end=180 + span, fill=(*accent_rgb, 250), width=th)
@@ -3481,10 +3515,11 @@ class BatteryWidget(BaseDesktopWidget):
             bar_x2 = w - pad - btn_s - int(8 * s)
             self._composite_frosted_track(
                 composite,
-                lambda ld: ld.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, fill=frosted_base, outline=(*accent_rgb, 155), width=2),
-                blur_r=2.2,
+                lambda ld: ld.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, fill=255),
+                blur_r=4.2,
             )
             draw = ImageDraw.Draw(composite, "RGBA")
+            draw.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, outline=(*accent_rgb, 175), width=2)
             fill_w = max(bar_h - 8, int((bar_x2 - bar_x1 - 8) * (pct / 100.0)))
             alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=(bar_h - 8) // 2, fill=(*accent_rgb, 215))
             draw.text((bar_x1 + int(14 * s), (bar_y1 + bar_y2) // 2), pct_label, fill=(255, 255, 255, 255), font=f_med, anchor="lm")
@@ -3524,17 +3559,15 @@ class BatteryWidget(BaseDesktopWidget):
             ry2 = ry1 + ring_d
             thick = max(6, int((8 if style == "neon" else 7) * s))
 
-            # Frosted smoked-glass disk + blurred spent track ring so desktop icons never bleed through
+            # Heavy real optical frosted-blur spent track ring + frosted dark center disk
             self._composite_frosted_track(
                 composite,
-                lambda ld: (
-                    ld.ellipse([rx1 + 2, ry1 + 2, rx2 - 2, ry2 - 2], fill=(12, 18, 30, 195)),
-                    ld.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(51, 65, 85, 225), width=thick + 2),
-                ),
-                blur_r=2.4,
+                lambda ld: ld.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=255, width=thick + 2),
+                blur_r=5.0,
             )
             draw = ImageDraw.Draw(composite, "RGBA")
-            draw.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(100, 116, 139, 130), width=thick)
+            draw.ellipse([rx1 + thick, ry1 + thick, rx2 - thick, ry2 - thick], fill=(12, 18, 30, 225))
+            draw.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(226, 232, 240, 45), width=thick)
             span = int(360 * (pct / 100.0))
             if style == "neon" and span > 0:
                 draw.arc([rx1 - 2, ry1 - 2, rx2 + 2, ry2 + 2], start=-90, end=-90 + span, fill=(*accent_rgb, 95), width=thick + 5)
@@ -3634,10 +3667,10 @@ class DesktopWidgetManager:
         excl = self.get_all_hwnds()
         if not excl:
             return
-        lowest_app, _ = find_lowest_app_above_desktop(exclude_hwnds=excl)
+        lowest_app, desk_cover = find_lowest_app_above_desktop(exclude_hwnds=excl)
         for widget in self.widgets.values():
             if widget.window and widget.window.winfo_exists():
-                widget._apply_z_order(lowest_app_override=lowest_app, exclude_hwnds=excl)
+                widget._apply_z_order(lowest_app_override=lowest_app, desk_cover_override=desk_cover, exclude_hwnds=excl)
 
     def has_open_modals_or_resizing(self):
         from custom_menu import CustomMenu

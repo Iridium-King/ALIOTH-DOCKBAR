@@ -458,6 +458,65 @@ def find_lowest_app_above_desktop(exclude_hwnds=()):
     return lowest_app, desk_cover
 
 
+def is_hwnd_behind(hwnd, ref_hwnd):
+    """Returns True if hwnd sits strictly BELOW ref_hwnd in Win32 Z-order (e.g. behind raised WorkerW)."""
+    if not hwnd or not ref_hwnd or int(hwnd) == int(ref_hwnd):
+        return False
+    cur = user32.GetWindow(int(ref_hwnd), 2)  # GW_HWNDNEXT (walking downward from ref_hwnd)
+    steps = 0
+    while cur and steps < 600:
+        if int(cur) == int(hwnd):
+            return True
+        cur = user32.GetWindow(cur, 2)
+        steps += 1
+    return False
+
+
+_WALLPAPER_CACHE = {"path": "", "mtime": 0.0, "size": (0, 0), "img": None}
+
+
+def get_blurred_desktop_backdrop(x, y, w, h, screen_w, screen_h, blur_radius=16):
+    """
+    Returns an RGBA crop of the user's real Windows wallpaper at screen rect (x, y, w, h)
+    with heavy Gaussian blur for genuine optical frosted-glass graph tracks (zero flicker, tiny RAM).
+    """
+    from PIL import Image, ImageOps, ImageFilter
+    try:
+        buf = ctypes.create_unicode_buffer(520)
+        ok = user32.SystemParametersInfoW(0x0073, 520, buf, 0)  # SPI_GETDESKWALLPAPER
+        wp_path = buf.value.strip() if ok else ""
+        if wp_path and os.path.exists(wp_path):
+            mt = os.path.getmtime(wp_path)
+            sz = (max(320, int(screen_w)), max(240, int(screen_h)))
+            if (
+                _WALLPAPER_CACHE["img"] is None
+                or _WALLPAPER_CACHE["path"] != wp_path
+                or _WALLPAPER_CACHE["mtime"] != mt
+                or _WALLPAPER_CACHE["size"] != sz
+            ):
+                with Image.open(wp_path) as raw:
+                    # Downscale 1/2 for super-fast heavy optical blur + minimal RAM (<2 MB)
+                    half_sz = (max(160, sz[0] // 2), max(120, sz[1] // 2))
+                    fitted = ImageOps.fit(raw.convert("RGB"), half_sz, method=Image.Resampling.BILINEAR)
+                    blurred_wp = fitted.filter(ImageFilter.GaussianBlur(radius=max(6, int(blur_radius * 0.65))))
+                _WALLPAPER_CACHE["path"] = wp_path
+                _WALLPAPER_CACHE["mtime"] = mt
+                _WALLPAPER_CACHE["size"] = sz
+                _WALLPAPER_CACHE["img"] = blurred_wp
+
+            wp_half = _WALLPAPER_CACHE["img"]
+            if wp_half is not None:
+                hx1 = max(0, min(wp_half.width - 2, int(x // 2)))
+                hy1 = max(0, min(wp_half.height - 2, int(y // 2)))
+                hx2 = max(hx1 + 2, min(wp_half.width, int((x + w + 1) // 2)))
+                hy2 = max(hy1 + 2, min(wp_half.height, int((y + h + 1) // 2)))
+                crop = wp_half.crop((hx1, hy1, hx2, hy2)).resize((max(1, int(w)), max(1, int(h))), Image.Resampling.BILINEAR)
+                return crop.convert("RGBA")
+    except Exception:
+        pass
+    return None
+
+
 class _SYSTEM_POWER_STATUS(ctypes.Structure):
     _fields_ = [
         ("ACLineStatus", ctypes.c_byte),

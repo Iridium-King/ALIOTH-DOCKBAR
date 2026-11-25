@@ -13,7 +13,7 @@ from collections import OrderedDict
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, simpledialog, colorchooser, filedialog
-from PIL import Image, ImageTk, ImageDraw, ImageFont
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageFilter
 
 import icon_extractor
 from config import ConfigManager
@@ -492,6 +492,8 @@ class DockWindow:
         self._bat_cache_ts = 0.0
         self._bat_icon_cache = None
         self._last_bat_draw_ts = 0.0
+        self._clock_icon_cache = None
+        self._last_clock_tick = ""
         try:
             from media_capsule import MediaCapsule
             self.media_capsule = MediaCapsule(self)
@@ -1475,6 +1477,7 @@ class DockWindow:
         self._scaled_icon_cache.clear()
         self._pill_cache.clear()
         self._bat_icon_cache = None
+        self._clock_icon_cache = None
         for it in self.pinned_items:
             it_id = it.get("id")
             if it.get("type") in ("app", "group", "action"):
@@ -1511,7 +1514,7 @@ class DockWindow:
         # Estimate tight max width with wave expansion (smaller buffer = faster 60+ FPS blits)
         num_items = max(1, len(self.items))
         lbl_font_sz = int(self.config_mgr.get("appearance", "label_font_size", 12))
-        label_clearance = max(58, lbl_font_sz + 40) if self.config_mgr.get("appearance", "show_labels", True) else 34
+        label_clearance = max(78, lbl_font_sz + 52) if self.config_mgr.get("appearance", "show_labels", True) else 58
         
         dock_h = max_icon_h + (pad_y * 2) + label_clearance
         wave_extra = base_size * max(0.2, max_zoom - 1.0) * min(num_items, 3.6)
@@ -1954,8 +1957,8 @@ class DockWindow:
                 self._last_hover_rendered = self.hovered_index
                 self._render_composite_dock()
 
-            # 12ms (~80 FPS budget) during active motion/hover/drag, 55ms idle (~0% CPU)
-            tick_ms = 12 if (needs_redraw or is_bouncing or is_dragging or self.mouse_inside_dock) else 55
+            # 10ms (~100 FPS budget) during fluid launch animations, 12ms motion/hover, 55ms idle
+            tick_ms = 10 if is_bouncing else (12 if (needs_redraw or is_dragging or self.mouse_inside_dock) else 55)
         except Exception as ex:
             print(f"[Dock] Animation tick error: {ex}")
         finally:
@@ -2065,6 +2068,136 @@ class DockWindow:
         img = hi.resize((s, s), Image.Resampling.LANCZOS)
         self._bat_icon_cache = (key, img)
         return img
+
+    def _get_clock_icon_img(self, size):
+        now_lt = time.localtime()
+        style = (self.config_mgr.get("appearance", "dock_clock_style", "digital") or "digital").lower()
+        use_24h = bool(self.config_mgr.get("appearance", "dock_clock_24h", True))
+        show_sec = bool(self.config_mgr.get("appearance", "dock_clock_seconds", False))
+        show_date = bool(self.config_mgr.get("appearance", "dock_clock_show_date", True))
+        col_hex = self.config_mgr.get("appearance", "dock_clock_color", "#f8fafc") or "#f8fafc"
+        acc_rgb = hex_to_rgb(col_hex)
+
+        hr = now_lt.tm_hour
+        if not use_24h:
+            hr = hr % 12 or 12
+        t_str = f"{hr:02d}:{now_lt.tm_min:02d}"
+        s_str = f":{now_lt.tm_sec:02d}" if show_sec else ""
+        dias = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+        d_str = f"{dias[now_lt.tm_wday]} {now_lt.tm_mday}" if show_date else ""
+        key = (int(size), style, t_str, s_str if (show_sec or style == "analog") else "", d_str, col_hex)
+        if self._clock_icon_cache and self._clock_icon_cache[0] == key:
+            return self._clock_icon_cache[1]
+
+        s = max(24, int(size))
+        hi_s = s * 2
+        hi = Image.new("RGBA", (hi_s, hi_s), (0, 0, 0, 0))
+        hd = ImageDraw.Draw(hi, "RGBA")
+        cx = cy = hi_s // 2
+        pad = int(hi_s * 0.08)
+
+        if style == "analog":
+            r = hi_s // 2 - pad
+            hd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(15, 23, 42, 230), outline=(*acc_rgb, 195), width=4)
+            for k_h in range(12):
+                ang = math.radians(k_h * 30 - 90)
+                r1 = r - (12 if k_h % 3 == 0 else 7)
+                r2 = r - 3
+                hd.line([(cx + math.cos(ang) * r1, cy + math.sin(ang) * r1), (cx + math.cos(ang) * r2, cy + math.sin(ang) * r2)], fill=(226, 232, 240, 210 if k_h % 3 == 0 else 120), width=3 if k_h % 3 == 0 else 2)
+            # Hour, minute, optional second hand
+            h_ang = math.radians(((now_lt.tm_hour % 12) + now_lt.tm_min / 60.0) * 30.0 - 90.0)
+            m_ang = math.radians((now_lt.tm_min + now_lt.tm_sec / 60.0) * 6.0 - 90.0)
+            hd.line([(cx, cy), (cx + math.cos(h_ang) * (r * 0.50), cy + math.sin(h_ang) * (r * 0.50))], fill=(*acc_rgb, 255), width=6)
+            hd.line([(cx, cy), (cx + math.cos(m_ang) * (r * 0.72), cy + math.sin(m_ang) * (r * 0.72))], fill=(248, 250, 252, 250), width=4)
+            if show_sec:
+                sec_ang = math.radians(now_lt.tm_sec * 6.0 - 90.0)
+                hd.line([(cx, cy), (cx + math.cos(sec_ang) * (r * 0.78), cy + math.sin(sec_ang) * (r * 0.78))], fill=(56, 189, 248, 255), width=2)
+            hd.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(56, 189, 248, 255))
+        elif style == "neon":
+            hd.rounded_rectangle([pad, pad, hi_s - pad, hi_s - pad], radius=int(hi_s * 0.24), fill=(9, 13, 24, 240), outline=(56, 189, 248, 225), width=4)
+            f_t = self._get_font("segoeuib.ttf", max(14, int(hi_s * (0.23 if not show_sec else 0.19))))
+            hd.text((cx, cy - (int(hi_s * 0.10) if d_str else 0)), t_str + s_str, fill=(56, 189, 248, 255), font=f_t, anchor="mm")
+            if d_str:
+                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.14)))
+                hd.text((cx, cy + int(hi_s * 0.19)), d_str, fill=(*acc_rgb, 225), font=f_d, anchor="mm")
+        elif style == "minimal":
+            f_t = self._get_font("segoeuib.ttf", max(15, int(hi_s * (0.27 if not show_sec else 0.21))))
+            hd.text((cx, cy - (int(hi_s * 0.11) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+            if d_str:
+                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.15)))
+                hd.text((cx, cy + int(hi_s * 0.20)), d_str, fill=(203, 213, 225, 225), font=f_d, anchor="mm")
+        elif style == "pill":
+            hd.rounded_rectangle([pad, int(hi_s * 0.16), hi_s - pad, int(hi_s * 0.84)], radius=int(hi_s * 0.32), fill=(0, 120, 212, 72), outline=(56, 189, 248, 210), width=3)
+            f_t = self._get_font("segoeuib.ttf", max(14, int(hi_s * (0.22 if not show_sec else 0.18))))
+            hd.text((cx, cy - (int(hi_s * 0.09) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+            if d_str:
+                f_d = self._get_font("segoeui.ttf", max(10, int(hi_s * 0.13)))
+                hd.text((cx, cy + int(hi_s * 0.16)), d_str, fill=(224, 242, 254, 235), font=f_d, anchor="mm")
+        else:
+            # "digital" crisp frosted glass tile
+            hd.rounded_rectangle([pad, pad, hi_s - pad, hi_s - pad], radius=int(hi_s * 0.24), fill=(15, 23, 42, 225), outline=(255, 255, 255, 65), width=2)
+            f_t = self._get_font("segoeuib.ttf", max(15, int(hi_s * (0.24 if not show_sec else 0.19))))
+            hd.text((cx, cy - (int(hi_s * 0.10) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+            if d_str:
+                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.14)))
+                hd.text((cx, cy + int(hi_s * 0.19)), d_str, fill=(148, 163, 184, 240), font=f_d, anchor="mm")
+
+        img = hi.resize((s, s), Image.Resampling.LANCZOS)
+        self._clock_icon_cache = (key, img)
+        return img
+
+    @staticmethod
+    def _draw_liquid_droplet(composite, cx, cy, rx, ry, base_rgb, hi_rgb, alpha):
+        """Draws a thick, plump, smoothly rounded glossy water-energy teardrop with soft luminous aura."""
+        if alpha <= 6 or rx < 2 or ry < 2:
+            return
+        pad = max(8, int(max(rx, ry) * 0.65))
+        bw = int((rx + pad) * 2)
+        bh = int((ry + pad) * 2)
+        ss = 2
+        patch = Image.new("RGBA", (bw * ss, bh * ss), (0, 0, 0, 0))
+        pd = ImageDraw.Draw(patch, "RGBA")
+        pcx, pcy = bw * ss / 2.0, bh * ss / 2.0
+        rxs, rys = rx * ss, ry * ss
+        er, eg, eb = base_rgb
+        hr, hg, hb = hi_rgb
+
+        # Soft energy halo behind teardrop
+        pd.ellipse([pcx - rxs * 1.45, pcy - rys * 1.15, pcx + rxs * 1.45, pcy + rys * 1.25], fill=(er, eg, eb, int(alpha * 0.34)))
+        # Rounded bottom bulb + smooth organic top tear cap (zero sharp jagged vertices!)
+        bulb_cy = pcy + rys * 0.24
+        pd.ellipse([pcx - rxs, bulb_cy - rxs, pcx + rxs, bulb_cy + rxs], fill=(er, eg, eb, int(alpha * 0.94)))
+        # Smoothly tapered rounded neck using stacked overlapping circles -> super fluid organic teardrop
+        for step_k in range(1, 7):
+            frac = step_k / 6.0
+            nr = max(2.0, rxs * (1.0 - frac * 0.78) ** 0.85)
+            ny = bulb_cy - rys * 1.18 * frac
+            pd.ellipse([pcx - nr, ny - nr, pcx + nr, ny + nr], fill=(er, eg, eb, int(alpha * 0.94)))
+        # Inner bright electric-cyan energy core
+        pd.ellipse([pcx - rxs * 0.68, bulb_cy - rxs * 0.68, pcx + rxs * 0.68, bulb_cy + rxs * 0.68], fill=(hr, hg, 255, int(alpha * 0.78)))
+        # Glossy white curved specular crescent highlight
+        sp_r = max(2.0, rxs * 0.30)
+        pd.ellipse([pcx - rxs * 0.45 - sp_r, bulb_cy - rxs * 0.22 - sp_r, pcx - rxs * 0.45 + sp_r, bulb_cy - rxs * 0.22 + sp_r], fill=(245, 252, 255, min(255, int(alpha * 0.96))))
+
+        soft = patch.filter(ImageFilter.GaussianBlur(radius=1.2))
+        patch = Image.alpha_composite(soft, patch)
+        small = patch.resize((bw, bh), Image.Resampling.LANCZOS)
+        composite.alpha_composite(small, (int(cx - bw // 2), int(cy - bh // 2)))
+
+    @staticmethod
+    def _draw_rounded_orb(composite, cx, cy, r, base_rgb, hi_rgb, alpha):
+        """Draws a glossy rounded water-energy bead with soft cyan-blue aura & white specular dot."""
+        if alpha <= 6 or r < 1.5:
+            return
+        er, eg, eb = base_rgb
+        hr, hg, hb = hi_rgb
+        ri = max(2, int(round(r)))
+        alpha_ellipse(composite, [cx - ri - 3, cy - ri - 3, cx + ri + 3, cy + ri + 3], fill=(er, eg, eb, int(alpha * 0.42)))
+        alpha_ellipse(composite, [cx - ri, cy - ri, cx + ri, cy + ri], fill=(er, eg, eb, int(alpha * 0.92)), outline=(hr, hg, 255, min(255, int(alpha))), width=1)
+        inner_r = max(1, int(ri * 0.52))
+        alpha_ellipse(composite, [cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r], fill=(hr, hg, 255, int(alpha * 0.85)))
+        sp = max(1, int(ri * 0.32))
+        alpha_ellipse(composite, [cx - int(ri * 0.35) - sp, cy - int(ri * 0.35) - sp, cx - int(ri * 0.35) + sp, cy - int(ri * 0.35) + sp], fill=(250, 254, 255, min(255, int(alpha * 0.95))))
 
     def _render_composite_dock(self):
         win_w = getattr(self, "dock_w", self.canvas.winfo_width())
@@ -2207,10 +2340,10 @@ class DockWindow:
         self.item_rects = []
         cur_x = pill_x1 + pad_x
         eff_speed = max(0.35, min(3.0, float(self.config_mgr.get("appearance", "launch_effect_speed", 1.0) or 1.0)))
-        eff_dur = 1.25 / eff_speed
+        eff_dur = 1.38 / eff_speed
         eff_rgb = hex_to_rgb(self.config_mgr.get("appearance", "launch_effect_color", "#0078d4"))
         er, eg, eb = eff_rgb
-        er_hi, eg_hi, eb_hi = min(255, er + 55), min(255, eg + 90), min(255, eb + 45)
+        er_hi, eg_hi, eb_hi = min(255, er + 55), min(255, eg + 115), min(255, eb + 45)
         now_eff = time.time()
 
         for i, it in enumerate(self.items):
@@ -2245,19 +2378,27 @@ class DockWindow:
                     active_eff = b_eff
                     decay = max(0.0, 1.0 - p_eff)
                     if b_eff == "rebote":
-                        bounce_dy = -abs(math.sin(p_eff * math.pi * 3.2)) * (base_size * 0.42) * decay
+                        bounce_dy = -abs(math.sin(p_eff * math.pi * 3.0)) * (base_size * 0.44) * (decay ** 1.15)
+                        eff_scale = 1.0 + 0.08 * math.cos(p_eff * math.pi * 6.0) * decay
                     elif b_eff == "gota_energia":
-                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.13) * decay
+                        # Phase 1 drop impact at p=0.26 -> gentle elastic liquid cushion dip + rise
+                        if p_eff >= 0.22:
+                            sp_p = (p_eff - 0.22) / 0.78
+                            bounce_dy = math.sin(sp_p * math.pi * 2.0) * (base_size * 0.10) * ((1.0 - sp_p) ** 1.2)
+                            eff_scale = 1.0 + 0.09 * math.sin(sp_p * math.pi * 2.5) * (1.0 - sp_p)
                     elif b_eff == "gota_rebote":
-                        bounce_dy = -abs(math.sin(p_eff * math.pi * 3.2)) * (base_size * 0.40) * decay
+                        if p_eff >= 0.20:
+                            sp_p = (p_eff - 0.20) / 0.80
+                            bounce_dy = -abs(math.sin(sp_p * math.pi * 3.0)) * (base_size * 0.42) * ((1.0 - sp_p) ** 1.1)
+                            eff_scale = 1.0 + 0.08 * math.sin(sp_p * math.pi * 3.0) * (1.0 - sp_p)
                     elif b_eff == "pulso_neon":
-                        eff_scale = 1.0 + 0.18 * abs(math.sin(p_eff * math.pi * 3.0)) * decay
-                        bounce_dy = -abs(math.sin(p_eff * math.pi * 3.0)) * (base_size * 0.08) * decay
+                        eff_scale = 1.0 + 0.16 * math.sin(p_eff * math.pi * 2.0) * decay
+                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.14)
                     elif b_eff == "levitacion":
-                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.34)
+                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.36)
                     elif b_eff == "pop_elastico":
-                        eff_scale = 1.0 + 0.24 * math.sin(p_eff * math.pi * 2.2) * decay
-                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.14) * decay
+                        eff_scale = 1.0 + 0.24 * math.sin(p_eff * math.pi * 2.2) * (decay ** 1.1)
+                        bounce_dy = -math.sin(p_eff * math.pi) * (base_size * 0.16) * decay
                 else:
                     self.bouncing_items.pop(it_id, None)
 
@@ -2304,85 +2445,92 @@ class DockWindow:
                 icy = int(item_y + size * 0.5)
                 floor_y = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
 
-                # Under-icon launch aura / thick Outlook-blue 3D ripples / volumetric beam
+                # Under-icon fluid water-energy splash waves / rounded orbital aurora / volumetric beam
                 if active_eff in ("gota_energia", "gota_rebote"):
-                    # 1) Deep luminous caustic splash pool beneath icon
-                    pool_r = int(size * (0.55 + 0.36 * math.sin(p_eff * math.pi)))
-                    alpha_ellipse(composite, [icx - pool_r, icy - pool_r, icx + pool_r, icy + pool_r], fill=(er, eg, eb, int(135 * decay)))
-                    # 2) Thick, bold 3D perspective concentric floor waves (Outlook royal -> electric aqua)
-                    for rw_i, dly in enumerate((0.0, 0.13, 0.27)):
-                        if p_eff >= dly:
-                            lp = min(1.0, (p_eff - dly) / max(0.1, 1.0 - dly))
-                            ld = (1.0 - lp) ** 0.95
-                            rx_f = int(size * (0.34 + 1.38 * lp))
-                            ry_f = max(5, int(rx_f * 0.28))
-                            ra_outer = int((240 - rw_i * 35) * ld)
-                            ra_inner = int((255 - rw_i * 30) * ld)
-                            if ra_outer > 8:
-                                alpha_ellipse(
-                                    composite,
-                                    [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f],
-                                    fill=(er, eg, eb, int(68 * ld)) if rw_i == 0 else None,
-                                    outline=(er, eg, eb, ra_outer),
-                                    width=7 if rw_i == 0 else 5,
-                                )
-                                alpha_ellipse(
-                                    composite,
-                                    [icx - rx_f + 2, floor_y - ry_f + 1, icx + rx_f - 2, floor_y + ry_f - 1],
-                                    outline=(er_hi, eg_hi, 255, ra_inner),
-                                    width=3 if rw_i == 0 else 2,
-                                )
-                    # 3) Lush thick crown splash plumes arcing up around both flanks of the icon
-                    if p_eff < 0.88:
-                        sp_t = p_eff / 0.88
-                        rise = math.sin(min(1.0, sp_t * 1.12) * math.pi)
-                        sp_a = int(245 * (1.0 - sp_t * 0.72))
-                        for side in (-1, 1):
-                            for k_lobe in range(4):
-                                ang = math.radians(-108 + side * (16 + k_lobe * 14))
-                                len_sp = size * (0.55 + 0.56 * rise) * (1.0 - k_lobe * 0.10)
-                                bx0 = icx + side * size * (0.18 + k_lobe * 0.08)
-                                by0 = floor_y - 2
-                                tx0 = icx + math.cos(ang) * len_sp + side * (size * 0.22)
-                                ty0 = max(3, floor_y + math.sin(ang) * len_sp)
-                                w_outer = max(4, 8 - k_lobe)
-                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(er, eg, eb, sp_a), width=w_outer)
-                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(er_hi, eg_hi, 255, min(255, sp_a + 15)), width=max(2, w_outer - 3))
+                    # Phase 2 starts smoothly right as the thick falling droplet impacts (p >= 0.20)
+                    if p_eff >= 0.20:
+                        sp_t = min(1.0, (p_eff - 0.20) / 0.80)
+                        sp_ease = 1.0 - (1.0 - sp_t) ** 3
+                        sp_dec = (1.0 - sp_t) ** 1.15
+                        # 1) Smooth layered radial water-energy bloom pool beneath icon
+                        for bloom_m, bloom_a in ((1.05, 42), (0.78, 74), (0.54, 115)):
+                            br = int(size * (0.42 + 0.32 * math.sin(sp_t * math.pi)) * bloom_m)
+                            alpha_ellipse(composite, [icx - br, icy - br, icx + br, icy + br], fill=(er, eg, eb, int(bloom_a * sp_dec)))
+                        # 2) Three ultra-fluid 3D concentric liquid-energy waves across dock floor
+                        for rw_i, dly in enumerate((0.0, 0.14, 0.29)):
+                            if sp_t >= dly:
+                                lp = min(1.0, (sp_t - dly) / max(0.1, 1.0 - dly))
+                                l_ease = 1.0 - (1.0 - lp) ** 2.6
+                                ld = (1.0 - lp) ** 1.05
+                                rx_f = int(size * (0.32 + 1.52 * l_ease))
+                                ry_f = max(6, int(rx_f * 0.27))
+                                ra_glow = int((145 - rw_i * 22) * ld)
+                                ra_mid = int((238 - rw_i * 28) * ld)
+                                ra_hi = int((255 - rw_i * 30) * ld)
+                                if ra_mid > 8:
+                                    # Soft wide outer energy glow + lush Outlook-blue body + crisp cyan-white rounded crest
+                                    alpha_ellipse(composite, [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f], outline=(er, eg, eb, ra_glow), width=10 if rw_i == 0 else 7)
+                                    alpha_ellipse(composite, [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f], fill=(er, eg, eb, int(46 * ld)) if rw_i == 0 else None, outline=(er, eg, eb, ra_mid), width=5 if rw_i == 0 else 4)
+                                    alpha_ellipse(composite, [icx - rx_f + 2, floor_y - ry_f + 1, icx + rx_f - 2, floor_y + ry_f - 1], outline=(er_hi, eg_hi, 255, ra_hi), width=2)
+                        # 3) Organic rounded back splash cushion (overlapping rounded liquid domes, zero sharp spikes)
+                        if sp_t < 0.78:
+                            dome_p = sp_t / 0.78
+                            dome_rise = math.sin(dome_p * math.pi)
+                            dome_a = int(200 * (1.0 - dome_p * 0.72))
+                            for lobe_x, lobe_r_m, lobe_h_m in ((-0.46, 0.24, 0.36), (-0.24, 0.28, 0.46), (0.0, 0.30, 0.42), (0.24, 0.28, 0.46), (0.46, 0.24, 0.36)):
+                                lx = int(icx + lobe_x * size * (0.8 + 0.55 * dome_p))
+                                ly = int(floor_y - size * lobe_h_m * dome_rise)
+                                lr = max(4, int(size * lobe_r_m * (0.65 + 0.45 * dome_rise)))
+                                alpha_ellipse(composite, [lx - lr, ly - lr, lx + lr, ly + lr], fill=(er, eg, eb, int(dome_a * 0.58)), outline=(er_hi, eg_hi, 255, int(dome_a * 0.92)), width=2)
                 elif active_eff == "pulso_neon":
-                    pulse = abs(math.sin(p_eff * math.pi * 3.0))
-                    r2 = int(size * (0.64 + 0.34 * pulse))
-                    r1 = int(size * (0.48 + 0.22 * pulse))
-                    alpha_ellipse(composite, [icx - r2, icy - r2, icx + r2, icy + r2], fill=(er, eg, eb, int(50 * decay)), outline=(er, eg, eb, int(175 * decay)), width=2)
-                    alpha_ellipse(composite, [icx - r1, icy - r1, icx + r1, icy + r1], fill=(er, eg, eb, int(86 * decay * pulse)), outline=(255, 255, 255, int(215 * decay * pulse)), width=2)
-                    ang_s = int((p_eff * 540) % 360)
-                    r_orb = int(size * 0.72)
-                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s, end=ang_s + 115, fill=(min(255, er + 60), min(255, eg + 60), 255, int(235 * decay)), width=3)
-                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s + 180, end=ang_s + 295, fill=(er, eg, eb, int(200 * decay)), width=3)
+                    pulse = math.sin(p_eff * math.pi)
+                    e_out = 1.0 - (1.0 - p_eff) ** 2.4
+                    for r_m, a_m in ((0.96, 46), (0.72, 82), (0.50, 120)):
+                        rr = int(size * (r_m + 0.26 * pulse))
+                        alpha_ellipse(composite, [icx - rr, icy - rr, icx + rr, icy + rr], fill=(er, eg, eb, int(a_m * decay)))
+                    ang_s = int((e_out * 480) % 360)
+                    r_orb = int(size * (0.58 + 0.28 * e_out))
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s, end=ang_s + 135, fill=(er, eg, eb, int(190 * decay)), width=7)
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s + 6, end=ang_s + 128, fill=(er_hi, eg_hi, 255, int(245 * decay)), width=3)
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s + 180, end=ang_s + 315, fill=(er, eg, eb, int(170 * decay)), width=6)
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s + 186, end=ang_s + 308, fill=(255, 255, 255, int(225 * decay)), width=2)
                 elif active_eff == "levitacion":
                     lift_s = math.sin(p_eff * math.pi)
-                    pad_rx = int(size * (0.44 + 0.18 * lift_s))
-                    pad_ry = max(3, int(size * 0.12))
-                    beam_w = max(7, int(size * 0.32 * lift_s))
+                    pad_rx = int(size * (0.52 + 0.22 * lift_s))
+                    pad_ry = max(5, int(size * 0.15))
+                    beam_w = max(9, int(size * 0.36 * lift_s))
                     top_b, bot_b = min(icy, floor_y), max(icy, floor_y)
                     if bot_b - top_b > 4:
-                        alpha_rounded_rect(composite, [icx - beam_w, top_b, icx + beam_w, bot_b], radius=beam_w, fill=(er, eg, eb, int(74 * lift_s)))
-                        ring_y = int(bot_b - (bot_b - top_b) * ((p_eff * 2.0) % 1.0))
-                        alpha_ellipse(composite, [icx - beam_w - 4, ring_y - 3, icx + beam_w + 4, ring_y + 3], outline=(255, 255, 255, int(195 * lift_s)), width=2)
-                    alpha_ellipse(composite, [icx - pad_rx, floor_y - pad_ry, icx + pad_rx, floor_y + pad_ry], fill=(er, eg, eb, int(145 * lift_s)), outline=(255, 255, 255, int(225 * lift_s)), width=2)
+                        alpha_rounded_rect(composite, [icx - beam_w - 4, top_b, icx + beam_w + 4, bot_b], radius=beam_w + 4, fill=(er, eg, eb, int(42 * lift_s)))
+                        alpha_rounded_rect(composite, [icx - beam_w, top_b, icx + beam_w, bot_b], radius=beam_w, fill=(er_hi, eg_hi, 255, int(68 * lift_s)))
+                        for ring_off in (0.0, 0.5):
+                            ry_l = int(bot_b - (bot_b - top_b) * ((p_eff * 1.8 + ring_off) % 1.0))
+                            alpha_ellipse(composite, [icx - beam_w - 5, ry_l - 4, icx + beam_w + 5, ry_l + 4], outline=(er_hi, eg_hi, 255, int(215 * lift_s)), width=3)
+                    alpha_ellipse(composite, [icx - pad_rx, floor_y - pad_ry, icx + pad_rx, floor_y + pad_ry], fill=(er, eg, eb, int(155 * lift_s)), outline=(er_hi, eg_hi, 255, int(235 * lift_s)), width=3)
                 elif active_eff == "pop_elastico":
-                    r_fl = int(size * (0.48 + 0.28 * p_eff))
-                    alpha_ellipse(composite, [icx - r_fl, icy - r_fl, icx + r_fl, icy + r_fl], fill=(er, eg, eb, int(68 * decay)))
-                    r_sw = int(size * (0.35 + 0.90 * p_eff))
-                    alpha_ellipse(composite, [icx - r_sw, icy - r_sw, icx + r_sw, icy + r_sw], outline=(255, 255, 255, int(210 * decay)), width=2)
+                    e_out = 1.0 - (1.0 - p_eff) ** 2.6
+                    r_fl = int(size * (0.52 + 0.36 * e_out))
+                    alpha_ellipse(composite, [icx - r_fl, icy - r_fl, icx + r_fl, icy + r_fl], fill=(er, eg, eb, int(92 * decay)))
+                    r_sw = int(size * (0.36 + 1.05 * e_out))
+                    alpha_ellipse(composite, [icx - r_sw, icy - r_sw, icx + r_sw, icy + r_sw], outline=(er, eg, eb, int(195 * decay)), width=6)
+                    alpha_ellipse(composite, [icx - r_sw + 2, icy - r_sw + 2, icx + r_sw - 2, icy + r_sw - 2], outline=(er_hi, eg_hi, 255, int(235 * decay)), width=2)
                 elif active_eff == "rebote":
-                    sh_rx = max(6, int(size * (0.38 - 0.14 * min(1.0, abs(bounce_dy) / max(1.0, base_size * 0.4)))))
-                    alpha_ellipse(composite, [icx - sh_rx, floor_y - 3, icx + sh_rx, floor_y + 3], fill=(0, 0, 0, int(115 * decay)))
+                    sh_rx = max(7, int(size * (0.42 - 0.16 * min(1.0, abs(bounce_dy) / max(1.0, base_size * 0.4)))))
+                    alpha_ellipse(composite, [icx - sh_rx, floor_y - 4, icx + sh_rx, floor_y + 4], fill=(0, 0, 0, int(125 * decay)))
 
-                # App / Group / Action / Battery icon rendering
+                # App / Group / Action / Battery / Clock icon rendering
                 if it_type == "battery":
                     bat_info = self._get_battery_cached()
                     bat_st = self.config_mgr.get("appearance", "dock_battery_style", "ring")
                     icon_img = self._get_battery_icon_img(size, bat_info, bat_st)
+                    draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
+                    dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
+                    dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
+                    if draw_sz != icon_img.width:
+                        icon_img = icon_img.resize((draw_sz, draw_sz), Image.Resampling.LANCZOS)
+                    composite.alpha_composite(icon_img, (dx_ic, dy_ic))
+                elif it_type == "clock":
+                    icon_img = self._get_clock_icon_img(size)
                     draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
                     dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
                     dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
@@ -2406,48 +2554,65 @@ class DockWindow:
                         dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
                         composite.alpha_composite(resized, (dx_ic, dy_ic))
 
-                # Over-icon thick glowing water crown & vivid ballistic droplets
+                # Over-icon Phase 1 thick falling water-energy drop + Phase 2 rounded liquid crown & beads
                 if active_eff in ("gota_energia", "gota_rebote"):
-                    # Thick translucent Outlook-blue crown rim wrapping lower edges of icon
-                    cr_rx = int(size * (0.56 + 0.22 * math.sin(p_eff * math.pi)))
-                    cr_ry = int(size * (0.28 + 0.14 * math.sin(p_eff * math.pi)))
-                    crown_a = int(250 * (decay ** 0.85))
-                    draw.arc([icx - cr_rx, floor_y - cr_ry * 2, icx + cr_rx, floor_y + 3], start=8, end=172, fill=(er, eg, eb, crown_a), width=7)
-                    draw.arc([icx - cr_rx + 2, floor_y - cr_ry * 2 + 2, icx + cr_rx - 2, floor_y + 1], start=14, end=166, fill=(er_hi, eg_hi, 255, crown_a), width=3)
-                    # Expanding vertical halo ring around icon center
-                    ring_r = int(size * (0.38 + 0.72 * p_eff))
-                    ring_a = int(215 * (decay ** 0.9))
-                    if ring_a > 10:
-                        alpha_ellipse(composite, [icx - ring_r, icy - ring_r, icx + ring_r, icy + ring_r], outline=(er, eg, eb, ring_a), width=5)
-                        alpha_ellipse(composite, [icx - ring_r + 2, icy - ring_r + 2, icx + ring_r - 2, icy + ring_r - 2], outline=(er_hi, eg_hi, 255, ring_a), width=2)
-                    # Bold ballistic water droplets with Outlook-blue halo & crisp white core
-                    drop_specs = [
-                        (-148, 0.95, 5), (-130, 1.18, 6), (-112, 1.32, 7),
-                        (-94, 1.25, 6), (-76, 1.34, 7), (-56, 1.16, 6),
-                        (-36, 0.96, 5), (-160, 0.82, 4), (-22, 0.82, 4),
-                    ]
-                    for ang_deg, spd_m, d_sz in drop_specs:
-                        dp = min(1.0, p_eff / 0.90)
-                        ang_r = math.radians(ang_deg)
-                        dist_d = size * spd_m * dp
-                        grav_d = (size * 0.56) * (dp ** 2)
-                        dx_p = int(icx + math.cos(ang_r) * dist_d)
-                        dy_p = max(4, int(icy + math.sin(ang_r) * dist_d + grav_d))
-                        da = int(250 * (1.0 - dp ** 1.35))
-                        if da > 10:
-                            dr = max(3, int(d_sz * (1.0 - dp * 0.28)))
-                            alpha_ellipse(composite, [dx_p - dr - 2, dy_p - dr - 2, dx_p + dr + 2, dy_p + dr + 2], fill=(er, eg, eb, int(da * 0.75)))
-                            alpha_ellipse(composite, [dx_p - dr, dy_p - dr, dx_p + dr, dy_p + dr], fill=(er_hi, eg_hi, 255, da), outline=(255, 255, 255, da), width=1)
+                    # Phase 1 (0.00 -> 0.28): Plump thick glossy water-energy teardrop plunging smoothly onto icon!
+                    if p_eff < 0.29:
+                        dp1 = min(1.0, p_eff / 0.26)
+                        fall_ease = dp1 ** 2.1
+                        start_y = max(12, int(item_y - size * 0.95))
+                        end_y = int(icy + size * 0.06)
+                        drop_cy = int(start_y + (end_y - start_y) * fall_ease)
+                        # Drop grows thick & slightly stretches vertically as it accelerates, flattens right on impact
+                        squash = 1.0 + 0.18 * dp1 if dp1 < 0.85 else max(0.65, 1.18 - (dp1 - 0.85) * 3.0)
+                        drop_rx = max(7, int(size * 0.23 / math.sqrt(squash)))
+                        drop_ry = max(9, int(size * 0.32 * squash))
+                        fade1 = 250 if dp1 < 0.88 else int(250 * max(0.0, (0.29 - p_eff) / 0.06))
+                        self._draw_liquid_droplet(composite, icx, drop_cy, drop_rx, drop_ry, (er, eg, eb), (er_hi, eg_hi, eb_hi), fade1)
+                        # Soft trailing energy bead following the main thick droplet
+                        if dp1 > 0.12 and dp1 < 0.86:
+                            tr_y = max(6, drop_cy - int(drop_ry * 1.45))
+                            self._draw_rounded_orb(composite, icx, tr_y, max(3, drop_rx * 0.42), (er, eg, eb), (er_hi, eg_hi, eb_hi), int(fade1 * 0.72))
+
+                    # Phase 2 (0.20 -> 1.00): Rounded fluid water-energy splash crown + smooth glossy beads!
+                    if p_eff >= 0.20:
+                        sp_t = min(1.0, (p_eff - 0.20) / 0.80)
+                        sp_ease = 1.0 - (1.0 - sp_t) ** 2.4
+                        sp_dec = (1.0 - sp_t) ** 1.15
+                        # Thick smooth curved liquid-energy splash arc embracing lower rim of icon
+                        cr_rx = int(size * (0.56 + 0.34 * sp_ease))
+                        cr_ry = int(size * (0.24 + 0.20 * math.sin(sp_t * math.pi)))
+                        crown_a = int(245 * sp_dec)
+                        if crown_a > 8:
+                            draw.arc([icx - cr_rx, floor_y - cr_ry * 2, icx + cr_rx, floor_y + 4], start=10, end=170, fill=(er, eg, eb, int(crown_a * 0.78)), width=9)
+                            draw.arc([icx - cr_rx + 2, floor_y - cr_ry * 2 + 2, icx + cr_rx - 2, floor_y + 2], start=14, end=166, fill=(er_hi, eg_hi, 255, crown_a), width=4)
+                            draw.arc([icx - cr_rx + 4, floor_y - cr_ry * 2 + 4, icx + cr_rx - 4, floor_y], start=24, end=156, fill=(245, 253, 255, int(crown_a * 0.85)), width=2)
+                        # 10 smooth glossy rounded water-energy beads & mini-droplets arcing fluidly outward
+                        orb_specs = [
+                            (-156, 1.05, 5.2, 0.00), (-140, 1.28, 6.8, 0.02), (-120, 1.46, 7.6, 0.00),
+                            (-102, 1.38, 6.4, 0.04), (-78, 1.40, 6.4, 0.03), (-60, 1.48, 7.6, 0.00),
+                            (-40, 1.28, 6.8, 0.02), (-24, 1.05, 5.2, 0.00), (-130, 0.92, 4.4, 0.10), (-50, 0.92, 4.4, 0.10),
+                        ]
+                        for ang_deg, spd_m, o_rad, o_dly in orb_specs:
+                            if sp_t < o_dly:
+                                continue
+                            op = min(1.0, (sp_t - o_dly) / max(0.15, 0.92 - o_dly))
+                            ang_r = math.radians(ang_deg)
+                            dist_o = size * spd_m * (1.0 - (1.0 - op) ** 2.0)
+                            grav_o = (size * 0.72) * (op ** 2.0)
+                            ox = int(icx + math.cos(ang_r) * dist_o)
+                            oy = max(6, int(icy + math.sin(ang_r) * dist_o + grav_o))
+                            oa = int(250 * (1.0 - op ** 1.45))
+                            cur_r = o_rad * (1.0 - op * 0.36)
+                            self._draw_rounded_orb(composite, ox, oy, cur_r, (er, eg, eb), (er_hi, eg_hi, eb_hi), oa)
                 elif active_eff == "pop_elastico":
+                    e_out = 1.0 - (1.0 - p_eff) ** 2.2
                     for k_ang in range(10):
-                        ang = (k_ang * math.pi / 5.0) + (p_eff * 0.42)
-                        r_in = size * (0.40 + 0.45 * p_eff)
-                        r_out = r_in + size * (0.26 * decay)
-                        x1_s = icx + math.cos(ang) * r_in
-                        y1_s = icy + math.sin(ang) * r_in
-                        x2_s = icx + math.cos(ang) * r_out
-                        y2_s = icy + math.sin(ang) * r_out
-                        alpha_line(composite, [(x1_s, y1_s), (x2_s, y2_s)], fill=(min(255, er + 55), min(255, eg + 55), 255, int(240 * decay)), width=2)
+                        ang = (k_ang * math.pi / 5.0) + (p_eff * 0.38)
+                        dist_p = size * (0.42 + 0.76 * e_out)
+                        px = int(icx + math.cos(ang) * dist_p)
+                        py = max(5, int(icy + math.sin(ang) * dist_p))
+                        self._draw_rounded_orb(composite, px, py, max(2.5, 5.5 * decay), (er, eg, eb), (er_hi, eg_hi, eb_hi), int(245 * decay))
 
                 # Running app indicator (customizable type, color & size)
                 if self.config_mgr.get("appearance", "show_running_indicators", True):
@@ -2556,6 +2721,12 @@ class DockWindow:
                     pct = bi.get("percent", 100)
                     chg = " (Cargando)" if bi.get("charging") else ""
                     name = f"Batería: {pct}%{chg}" if bi.get("has_battery") else "Corriente AC"
+                    self._draw_tooltip_label(draw, name, self.item_rects[self.hovered_index], pill_y1, pill_y2, win_w, pos)
+                elif it.get("type") == "clock":
+                    lt = time.localtime()
+                    dias = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+                    meses = ("Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
+                    name = f"{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}  •  {dias[lt.tm_wday]} {lt.tm_mday} {meses[lt.tm_mon - 1]}"
                     self._draw_tooltip_label(draw, name, self.item_rects[self.hovered_index], pill_y1, pill_y2, win_w, pos)
                 elif it.get("type") in ("app", "group", "action", "running_win"):
                     name = it.get("name", "")
@@ -3177,10 +3348,17 @@ class DockWindow:
             except Exception:
                 pass
 
-        # Periodically refresh Dockbar battery item if present
+        # Periodically refresh Dockbar battery & clock items if present
         if any(it.get("type") == "battery" for it in self.items):
             if time.monotonic() - getattr(self, "_last_bat_draw_ts", 0.0) >= 4.0:
                 self._last_bat_draw_ts = time.monotonic()
+                self._dirty = True
+        if any(it.get("type") == "clock" for it in self.items):
+            lt_c = time.localtime()
+            show_sec_c = bool(self.config_mgr.get("appearance", "dock_clock_seconds", False)) or (self.config_mgr.get("appearance", "dock_clock_style", "digital") == "analog")
+            ck = f"{lt_c.tm_hour}:{lt_c.tm_min}:{lt_c.tm_sec}" if show_sec_c else f"{lt_c.tm_hour}:{lt_c.tm_min}"
+            if ck != getattr(self, "_last_clock_tick", ""):
+                self._last_clock_tick = ck
                 self._dirty = True
 
         # 1. UNCONDITIONAL hide on click-outside, focus switch, or autohide delay
@@ -3188,14 +3366,22 @@ class DockWindow:
             if clicked_outside or fg_changed_outside or (not btn_down_now and not flyout_open and not preview_open and not launcher_open and (time.time() - self.last_leave_time > delay)):
                 self._tuck_behind_windows(reason="click" if clicked_outside else ("fg" if fg_changed_outside else "delay"))
         elif autohide and (not self.is_revealed):
-            # Keep dock strictly behind apps when apps exist above desktop, OR keep visible above raised WorkerW during Show Desktop
+            # Keep dock AND media capsule strictly behind apps when apps exist above desktop, OR above WorkerW during Show Desktop
             try:
                 has_topmost = bool(user32.GetWindowLongW(self.hwnd, GWL_EXSTYLE) & 0x00000008)
-                has_apps = bool(self._find_lowest_app_above_desktop())
+                anchor_app = self._find_lowest_app_above_desktop()
+                has_apps = bool(anchor_app)
                 if has_apps and has_topmost:
                     self._tuck_behind_windows(reason="heal_topmost")
                 elif (not has_apps) and (not has_topmost):
                     self._place_above_desktop_below_apps()
+                # Strict Media Capsule Z-order lockstep (never stays topmost when dock is tucked behind open apps!)
+                if mc and mc.hwnd and user32.IsWindow(mc.hwnd) and not cursor_over_capsule:
+                    mc_topmost = bool(user32.GetWindowLongW(mc.hwnd, GWL_EXSTYLE) & 0x00000008)
+                    if has_apps and (mc_topmost or (fg_now and fg_now != self.hwnd and fg_now != mc.hwnd and not is_shell_fg and self._is_window_above(mc.hwnd, fg_now))):
+                        mc.sync_z_order(False, fg_now if (fg_now and not is_shell_fg) else anchor_app)
+                    elif (not has_apps) and (not mc_topmost):
+                        mc.sync_z_order(False, 0)
             except Exception:
                 pass
 
@@ -3213,11 +3399,15 @@ class DockWindow:
                         self._dirty = True
                     if self.is_revealed:
                         user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                        if mc:
+                            mc.sync_z_order(True, 0)
                     else:
                         self._place_above_desktop_below_apps()
                 except Exception:
                     pass
             elif autohide and (not self.is_revealed) and fg_now and fg_now != self.hwnd and not is_shell_fg:
+                if mc and mc.hwnd and user32.IsWindow(mc.hwnd) and not cursor_over_capsule and self._is_window_above(mc.hwnd, fg_now):
+                    mc.sync_z_order(False, fg_now)
                 try:
                     if user32.IsWindowVisible(fg_now) and not user32.IsIconic(fg_now) and self._find_lowest_app_above_desktop():
                         fg_pid = wintypes.DWORD()
@@ -3382,6 +3572,9 @@ class DockWindow:
                 elif it_type == "battery":
                     self._trigger_launch_effect(item.get("id"))
                     os.startfile("ms-settings:batterysaver")
+                elif it_type == "clock":
+                    self._trigger_launch_effect(item.get("id"))
+                    os.startfile("ms-settings:dateandtime")
                 elif it_type == "running_win":
                     self._activate_window(item.get("hwnd"))
 
@@ -3628,6 +3821,19 @@ class DockWindow:
                 menu.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
                 menu.add_command("Quitar batería del Dock", lambda: self._remove_item(item), danger=True)
                 menu.add_separator()
+            elif item.get("type") == "clock":
+                menu.add_header("Widget de Reloj en Dockbar")
+                cur_cs = (self.config_mgr.get("appearance", "dock_clock_style", "digital") or "digital").lower()
+                sec_cs = menu.add_section("Estilo de Reloj en Dock", expanded=True)
+                for cst_id, cst_lbl in [("digital", "Digital Cristal"), ("analog", "Analógico"), ("neon", "Neón"), ("minimal", "Minimalista"), ("pill", "Píldora Azul")]:
+                    sec_cs.add_command(cst_lbl, lambda s=cst_id: self._set_dock_clock_opt("dock_clock_style", s), checked=(cur_cs == cst_id))
+                menu.add_command("Formato 24 horas", lambda: self._set_dock_clock_opt("dock_clock_24h", not bool(self.config_mgr.get("appearance", "dock_clock_24h", True))), checked=bool(self.config_mgr.get("appearance", "dock_clock_24h", True)))
+                menu.add_command("Mostrar segundero", lambda: self._set_dock_clock_opt("dock_clock_seconds", not bool(self.config_mgr.get("appearance", "dock_clock_seconds", False))), checked=bool(self.config_mgr.get("appearance", "dock_clock_seconds", False)))
+                menu.add_command("Mostrar fecha", lambda: self._set_dock_clock_opt("dock_clock_show_date", not bool(self.config_mgr.get("appearance", "dock_clock_show_date", True))), checked=bool(self.config_mgr.get("appearance", "dock_clock_show_date", True)))
+                menu.add_command("Fecha y Hora de Windows...", lambda: os.startfile("ms-settings:dateandtime"))
+                menu.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
+                menu.add_command("Quitar reloj del Dock", lambda: self._remove_item(item), danger=True)
+                menu.add_separator()
             elif item.get("type") == "separator" and not item.get("is_dynamic"):
                 menu.add_command("Quitar separador", lambda: self._remove_item(item), danger=True)
                 menu.add_separator()
@@ -3636,6 +3842,7 @@ class DockWindow:
         clicked_empty = not (idx is not None and 0 <= idx < len(self.items))
         sec_add = menu.add_section("Añadir a la Dockbar", expanded=clicked_empty)
         sec_add.add_command("Añadir programa o archivo...", self._add_item_manually)
+        sec_add.add_command("Widget: Reloj y Fecha en Dockbar", self._add_clock_dock_item)
         sec_add.add_command("Widget: Porcentaje de Batería", self._add_battery_dock_item)
         sec_add.add_command("Botón: Lanzador de Apps (Inicio)", lambda: self._add_system_action("app_launcher", "Aplicaciones"))
         sec_add.add_command("Insertar separador al final", lambda: self._insert_separator(len(self.pinned_items)))
@@ -3732,6 +3939,17 @@ class DockWindow:
     def _set_dock_battery_style(self, st_id):
         self.config_mgr.set("appearance", "dock_battery_style", st_id)
         self._bat_icon_cache = None
+        self._dirty = True
+
+    def _add_clock_dock_item(self):
+        new_clk = {"type": "clock", "name": "Reloj"}
+        self.config_mgr.add_item(new_clk)
+        self.reload_items()
+        self.update_geometry()
+
+    def _set_dock_clock_opt(self, key, val):
+        self.config_mgr.set("appearance", key, val)
+        self._clock_icon_cache = None
         self._dirty = True
 
     def _restore_original_icon(self, item):
