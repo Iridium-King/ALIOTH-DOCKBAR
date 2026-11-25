@@ -1,0 +1,11 @@
+{
+  "items": [
+    {
+      "internetMessageId": "<ejemplo-correo-001@sodexo.com>",
+      "subject": "Revisar reporte semanal de salud ocupacional",
+      "from": "Coordinación Médica",
+      "importance": "high",
+      "notebook": "Outlook"
+    }
+  ]
+}

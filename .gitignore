@@ -1,0 +1,21 @@
+# Personal configuration & live runtime state
+config.json
+todo_inbox.json
+*.tmp
+
+# Runtime logs
+*.log
+*.log.old
+
+# Python & OS caches
+__pycache__/
+*.py[cod]
+cache/
+
+# Local shortcuts & personal session captures
+*.lnk
+autostart.pyw
+conversacion/
+PNG *.png
+Thumbs.db
+Desktop.ini

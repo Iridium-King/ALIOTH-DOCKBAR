@@ -1,0 +1,3428 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuración - Alioth Dockbar</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" href="/assets/logo.png">
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --surface: #11151f;
+      --card-bg: rgba(22, 26, 35, 0.82);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent: #3b82f6;
+      --accent-soft: rgba(59, 130, 246, 0.14);
+      --accent-hover: #2563eb;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+      --success: #10b981;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    }
+
+    html, body {
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 0%, #1b2436 0%, #0b0d12 75%);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .ico {
+      width: 17px;
+      height: 17px;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      flex-shrink: 0;
+    }
+
+    .ico-sm {
+      width: 15px;
+      height: 15px;
+    }
+
+    .ico-accent {
+      color: #60a5fa;
+    }
+
+    header {
+      flex-shrink: 0;
+      padding: 16px 28px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(11, 13, 18, 0.9);
+      backdrop-filter: blur(20px);
+      z-index: 20;
+    }
+
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 9px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      object-fit: cover;
+    }
+
+    .title-area h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-area p {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+
+    .status-badge {
+      font-size: 12px;
+      padding: 5px 11px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.14);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.28);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-badge::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .nav-tabs {
+      flex-shrink: 0;
+      display: flex;
+      gap: 6px;
+      padding: 10px 28px 0;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(13, 16, 23, 0.85);
+      z-index: 15;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      transition: all 0.2s ease;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .tab-btn.active {
+      color: #fff;
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--accent);
+      border-radius: 3px 3px 0 0;
+      box-shadow: 0 0 12px var(--accent);
+    }
+
+    /* Scroll strictly below tabs and above footer */
+    .scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 22px 28px 28px;
+    }
+
+    *::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    *::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    *::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.28);
+      border-radius: 99px;
+    }
+
+    *::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.5);
+    }
+
+    main {
+      max-width: 920px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .tab-content {
+      display: none;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .tab-content.active {
+      display: flex;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 18px 22px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 10px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      gap: 16px;
+    }
+
+    .setting-row:last-child {
+      border-bottom: none;
+    }
+
+    .setting-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      max-width: 60%;
+    }
+
+    .setting-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .setting-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 240px;
+    }
+
+    .slider-container input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .slider-val {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      width: 52px;
+      text-align: right;
+    }
+
+    select.select-input {
+      background: #1a202c;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #2a3140;
+      transition: .25s;
+      border-radius: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .25s;
+      border-radius: 50%;
+    }
+
+    input:checked + .slider {
+      background-color: var(--accent);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+
+    /* Radio Group */
+    .radio-group {
+      display: flex;
+      gap: 4px;
+      background: rgba(0, 0, 0, 0.28);
+      padding: 4px;
+      border-radius: 9px;
+      border: 1px solid var(--card-border);
+      flex-wrap: wrap;
+    }
+
+    .radio-option {
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+
+    .radio-option:hover {
+      color: #fff;
+    }
+
+    .radio-option.selected {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .color-btn-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .color-swatch {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 2px solid rgba(255, 255, 255, 0.22);
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    .btn {
+      background: #232a38;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      padding: 8px 13px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .btn:hover {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    /* Smart Search Bar */
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 13px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      background: rgba(10, 13, 20, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      padding: 10px 14px 10px 38px;
+      color: #fff;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+      user-select: text;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+    }
+
+    .search-results {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 240px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .search-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      gap: 12px;
+    }
+
+    .search-row:hover {
+      background: rgba(59, 130, 246, 0.1);
+      border-color: rgba(59, 130, 246, 0.3);
+    }
+
+    .search-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .search-meta img {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+
+    .search-text {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .search-name {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .search-path {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-tag {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 99px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #cbd5e1;
+      flex-shrink: 0;
+    }
+
+    /* Items List */
+    .items-container {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 360px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+
+    .item-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(30, 36, 48, 0.55);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      transition: all 0.2s;
+      gap: 12px;
+    }
+
+    .item-card:hover {
+      background: rgba(30, 36, 48, 0.9);
+      border-color: rgba(96, 165, 250, 0.3);
+    }
+
+    .item-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .item-icon-box {
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      background: rgba(0, 0, 0, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .item-icon-box img {
+      width: 30px;
+      height: 30px;
+      object-fit: contain;
+    }
+
+    .item-title {
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .item-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 440px;
+    }
+
+    .item-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      width: 32px;
+      height: 32px;
+      border-radius: 7px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.09);
+      color: #fff;
+    }
+
+    /* Overlay Modal for Icon Packs & System Actions */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 7, 11, 0.82);
+      backdrop-filter: blur(8px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 10px;
+    }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
+    .modal-box {
+      background: #141822;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      width: 100%;
+      max-width: 760px;
+      max-height: calc(100vh - 20px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+    }
+
+    #icon-pack-modal {
+      padding: 8px;
+    }
+
+    #icon-pack-modal .modal-box {
+      max-width: 100%;
+      height: calc(100vh - 16px);
+      max-height: calc(100vh - 16px);
+      border-radius: 12px;
+    }
+
+    .modal-head {
+      flex-shrink: 0;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .modal-head h3 {
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #icon-suggestions-wrap {
+      flex-shrink: 0;
+      padding: 5px 16px 4px;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(59, 130, 246, 0.06);
+    }
+
+    .suggestions-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #93c5fd;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 4px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .suggestions-row {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 2px;
+    }
+
+    .suggestions-row .pack-cell {
+      flex: 0 0 88px;
+      padding: 5px 6px;
+      gap: 3px;
+      border-radius: 8px;
+    }
+
+    .suggestions-row .pack-cell img {
+      width: 36px;
+      height: 36px;
+    }
+
+    .suggestions-row .pack-cell span {
+      font-size: 10.5px;
+      line-height: 1.15;
+    }
+
+    .suggestions-row .pack-cell .pack-sub {
+      font-size: 8.5px;
+      line-height: 1.1;
+    }
+
+    .pack-tabs {
+      flex-shrink: 0;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px 6px;
+      background: rgba(0, 0, 0, 0.22);
+    }
+
+    .pack-tab {
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    .pack-tab:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .pack-tab.active {
+      background: var(--accent-soft);
+      color: #60a5fa;
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    .pack-dropdown {
+      padding: 6px 10px;
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      cursor: pointer;
+      outline: none;
+      max-width: 240px;
+      flex-shrink: 0;
+      transition: all 0.15s;
+    }
+
+    .pack-dropdown:hover {
+      border-color: rgba(96, 165, 250, 0.45);
+      background: rgba(255, 255, 255, 0.09);
+    }
+
+    .pack-dropdown.active {
+      background: var(--accent-soft);
+      color: #60a5fa;
+      border-color: rgba(59, 130, 246, 0.45);
+    }
+
+    .pack-dropdown option {
+      background: #141822;
+      color: #f1f5f9;
+    }
+
+    .pack-overflow-wrap {
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .pack-filter-bar {
+      flex-shrink: 0;
+      padding: 0 16px 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--card-border);
+      background: rgba(0, 0, 0, 0.22);
+    }
+
+    .pack-filter-bar .search-input {
+      flex: 1;
+      min-width: 160px;
+      padding: 6px 12px;
+      font-size: 12.5px;
+    }
+
+    .pack-size-group {
+      display: inline-flex;
+      gap: 3px;
+      background: rgba(0, 0, 0, 0.28);
+      padding: 3px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      flex-shrink: 0;
+    }
+
+    .pack-size-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .pack-size-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .pack-grid {
+      flex: 1 1 auto;
+      min-height: 0;
+      padding: 10px 16px 14px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      gap: 10px;
+      overflow-y: auto;
+      align-content: start;
+    }
+
+    .pack-grid.size-md {
+      grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    }
+
+    .pack-grid.size-md .pack-cell img {
+      width: 52px;
+      height: 52px;
+    }
+
+    .pack-grid.size-xl {
+      grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+    }
+
+    .pack-grid.size-xl .pack-cell img {
+      width: 88px;
+      height: 88px;
+    }
+
+    .pack-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 7px;
+      padding: 11px 6px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      transition: all 0.15s;
+      min-width: 0;
+    }
+
+    .pack-cell:hover {
+      background: rgba(59, 130, 246, 0.16);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+
+    .pack-cell img {
+      width: 68px;
+      height: 68px;
+      object-fit: contain;
+    }
+
+    .pack-cell span {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      width: 100%;
+    }
+
+    .pack-cell .pack-sub {
+      font-size: 9px;
+      opacity: 0.62;
+    }
+
+    .modal-foot {
+      flex-shrink: 0;
+      padding: 9px 16px;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+
+    .style-toggle-btn {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      border: 1px solid var(--card-border);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.16s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .style-toggle-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.09);
+    }
+
+    .style-toggle-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(59, 130, 246, 0.35);
+    }
+
+    .preset-dot {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 2px solid rgba(255, 255, 255, 0.28);
+      transition: transform 0.15s ease;
+    }
+
+    .preset-dot:hover {
+      transform: scale(1.16);
+      border-color: #fff;
+    }
+
+    /* Collapsible Widget Cards */
+    .widget-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 2px 2px;
+      flex-wrap: wrap;
+    }
+
+    .card.collapsible {
+      padding: 14px 20px;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+
+    .card.collapsible:hover {
+      border-color: rgba(96, 165, 250, 0.28);
+    }
+
+    .card.collapsible > .card-title {
+      cursor: pointer;
+      justify-content: space-between;
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
+      transition: all 0.18s ease;
+    }
+
+    .card.collapsible.expanded {
+      padding: 18px 22px;
+    }
+
+    .card.collapsible.expanded > .card-title {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .card.collapsible > .card-body {
+      display: none;
+    }
+
+    .card.collapsible.expanded > .card-body {
+      display: block;
+    }
+
+    .card-head-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+
+    .card-head-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .collapse-chevron {
+      width: 18px;
+      height: 18px;
+      color: var(--text-muted);
+      transition: transform 0.22s ease, color 0.18s ease;
+    }
+
+    .card.collapsible:hover .collapse-chevron {
+      color: #fff;
+    }
+
+    .card.collapsible.expanded .collapse-chevron {
+      transform: rotate(180deg);
+      color: #60a5fa;
+    }
+
+    .widget-typo-section {
+      margin-top: 8px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+
+    .widget-typo-heading {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+      color: #93c5fd;
+      margin-bottom: 4px;
+    }
+
+    .dim-input {
+      width: 68px;
+      background: #151b28;
+      color: var(--text);
+      border: 1px solid var(--card-border);
+      border-radius: 7px;
+      padding: 5px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+      outline: none;
+      user-select: text;
+    }
+
+    .dim-input:focus {
+      border-color: var(--accent);
+    }
+
+    footer {
+      flex-shrink: 0;
+      padding: 13px 28px;
+      background: rgba(11, 13, 18, 0.96);
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 20;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand-wrap">
+      <img src="/assets/logo.png" alt="Alioth Dockbar" class="brand-logo" onerror="this.style.display='none'">
+      <div class="title-area">
+        <h1>Alioth Dockbar <span style="font-size:12px; font-weight:normal; opacity:0.6;">Panel de Control</span></h1>
+        <p>Personalización visual y funcional en tiempo real</p>
+      </div>
+    </div>
+    <div class="status-badge" id="live-indicator">Sincronizado en Vivo</div>
+  </header>
+
+  <nav class="nav-tabs">
+    <button class="tab-btn active" onclick="switchTab('general', this)">
+      <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      General
+    </button>
+    <button class="tab-btn" onclick="switchTab('appearance', this)">
+      <svg class="ico" viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+      Apariencia y Zoom
+    </button>
+    <button class="tab-btn" onclick="switchTab('items', this)">
+      <svg class="ico" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/></svg>
+      Iconos y Elementos
+    </button>
+    <button class="tab-btn" onclick="switchTab('widgets', this)">
+      <svg class="ico" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Widgets de Escritorio
+    </button>
+  </nav>
+
+  <div class="scroll-area">
+    <main>
+      <!-- TAB 1: GENERAL -->
+      <div id="tab-general" class="tab-content active">
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            Posición en Pantalla
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Ubicación del Dock</span>
+              <span class="setting-desc">Borde de la pantalla donde se ancla la barra</span>
+            </div>
+            <div class="radio-group" id="pos-group">
+              <div class="radio-option" data-pos="bottom" onclick="setPos('bottom')">Abajo</div>
+              <div class="radio-option" data-pos="top" onclick="setPos('top')">Arriba</div>
+              <div class="radio-option" data-pos="left" onclick="setPos('left')">Izquierda</div>
+              <div class="radio-option" data-pos="right" onclick="setPos('right')">Derecha</div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Separación del Borde de Pantalla</span>
+              <span class="setting-desc">0 px para que quede pegada al ras de la pantalla</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="edge_offset" min="0" max="60" value="0" oninput="updateSetting('appearance', 'edge_offset', parseInt(this.value)); updateLabel('lbl-edge', this.value + ' px')">
+              <span class="slider-val" id="lbl-edge">0 px</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Comportamiento y Arranque
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Ocultar Detrás de Ventanas Abiertas</span>
+              <span class="setting-desc">Queda detrás de cualquier ventana (maximizada o normal) y emerge al tocar el borde</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="autohide" onchange="updateSetting('general', 'autohide', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Mostrar Programas Abiertos en la Dockbar</span>
+              <span class="setting-desc">Muestra a la derecha las apps abiertas (incluyendo PWAs y apps dentro de carpetas)</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="show_open_windows" onchange="updateSetting('general', 'show_open_windows', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Iniciar Automáticamente con Windows</span>
+              <span class="setting-desc">Sin requerir permisos de administrador</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="start_with_windows" onchange="updateSetting('general', 'start_with_windows', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Bloquear Iconos del Dock</span>
+              <span class="setting-desc">Evita mover o eliminar elementos por accidente</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="locked" onchange="updateSetting('general', 'locked', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: APARIENCIA Y ZOOM -->
+      <div id="tab-appearance" class="tab-content">
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+            Tamaño y Zoom de Iconos
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Tamaño Base de Iconos</span>
+              <span class="setting-desc">Dimensiones normales de reposo de cada icono</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="base_icon_size" min="32" max="96" value="48" oninput="updateSetting('appearance', 'base_icon_size', parseInt(this.value)); updateLabel('lbl-size', this.value + ' px')">
+              <span class="slider-val" id="lbl-size">48 px</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Ampliación / Zoom Máximo</span>
+              <span class="setting-desc">Factor de aumento de la onda al pasar el mouse</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="max_zoom" min="1.0" max="2.2" step="0.05" value="1.7" oninput="updateSetting('appearance', 'max_zoom', parseFloat(this.value)); updateLabel('lbl-zoom', this.value + 'x')">
+              <span class="slider-val" id="lbl-zoom">1.7x</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Separación entre Iconos</span>
+              <span class="setting-desc">Distancia horizontal entre elementos contiguos</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="icon_spacing" min="2" max="30" value="10" oninput="updateSetting('appearance', 'icon_spacing', parseInt(this.value)); updateLabel('lbl-spacing', this.value + ' px')">
+              <span class="slider-val" id="lbl-spacing">10 px</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Cristal y Efectos de la Dockbar
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Color de Fondo de la Barra</span>
+              <span class="setting-desc">Elige cualquier color sin afectar a los iconos</span>
+            </div>
+            <div class="color-btn-wrapper">
+              <input type="color" id="bg_color_input" style="opacity:0; width:0; height:0;" onchange="updateBgColor(this.value)">
+              <div class="color-swatch" id="bg-swatch" onclick="document.getElementById('bg_color_input').click()"></div>
+              <button class="btn" onclick="document.getElementById('bg_color_input').click()">Cambiar Color</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Opacidad del Fondo (Solo Barra)</span>
+              <span class="setting-desc">Los iconos permanecen 100% nítidos y opacos</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="bg_opacity" min="0.1" max="1.0" step="0.02" value="0.82" oninput="updateSetting('appearance', 'bg_opacity', parseFloat(this.value)); updateLabel('lbl-op', Math.round(this.value * 100) + ' %')">
+              <span class="slider-val" id="lbl-op">82 %</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Redondeo de Esquinas</span>
+              <span class="setting-desc">Curvatura del contenedor de la barra</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="corner_radius" min="0" max="35" value="20" oninput="updateSetting('appearance', 'corner_radius', parseInt(this.value)); updateLabel('lbl-rad', this.value + ' px')">
+              <span class="slider-val" id="lbl-rad">20 px</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Redondear También Esquinas Inferiores</span>
+              <span class="setting-desc">Aplica el redondeo completo a las 4 esquinas incluso con separación de 0 px</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="round_all_corners" checked onchange="updateSetting('appearance', 'round_all_corners', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Efecto al Abrir Aplicaciones</span>
+              <span class="setting-desc">Animación visual cuando ejecutas un acceso en la Dockbar (incluye Gota de Agua / Energía)</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <select class="select-input" id="launch_effect" onchange="onLaunchEffectChange(this.value)">
+                <option value="gota_energia">💧 Gota de Agua / Energía (Azul)</option>
+                <option value="gota_rebote">🌊 Gota de Energía + Rebote</option>
+                <option value="rebote">🏀 Rebote Clásico (macOS)</option>
+                <option value="pulso_neon">✨ Pulso Neón Luminoso</option>
+                <option value="levitacion">🚀 Levitación y Haz de Luz</option>
+                <option value="pop_elastico">⚡ Pop Elástico con Destellos</option>
+                <option value="ninguno">🚫 Sin efecto</option>
+              </select>
+              <button class="btn btn-primary" type="button" onclick="previewLaunchEffect()">Probar</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Rapidez del Efecto al Abrir</span>
+              <span class="setting-desc">Ajusta la velocidad de las ondas, destellos o rebotes (1.0x normal)</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="launch_effect_speed" min="0.4" max="2.5" step="0.1" value="1.0" oninput="updateSetting('appearance', 'launch_effect_speed', parseFloat(this.value)); updateLabel('lbl-eff-speed', parseFloat(this.value).toFixed(1) + 'x')">
+              <span class="slider-val" id="lbl-eff-speed">1.0x</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Color de la Gota de Energía / Destello</span>
+              <span class="setting-desc">Azul eléctrico por defecto o cualquier tono personalizado</span>
+            </div>
+            <div class="color-btn-wrapper">
+              <div class="preset-dot" style="background:#38bdf8;" title="Azul Energía" onclick="setEffectColor('#38bdf8')"></div>
+              <div class="preset-dot" style="background:#06b6d4;" title="Agua Cian" onclick="setEffectColor('#06b6d4')"></div>
+              <div class="preset-dot" style="background:#10b981;" title="Esmeralda" onclick="setEffectColor('#10b981')"></div>
+              <div class="preset-dot" style="background:#a855f7;" title="Pulso Violeta" onclick="setEffectColor('#a855f7')"></div>
+              <div class="preset-dot" style="background:#f59e0b;" title="Energía Ámbar" onclick="setEffectColor('#f59e0b')"></div>
+              <input type="color" id="launch_effect_color_input" style="opacity:0; width:0; height:0;" onchange="setEffectColor(this.value)">
+              <div class="color-swatch" id="eff-color-swatch" title="Elegir otro color" onclick="document.getElementById('launch_effect_color_input').click()"></div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Indicador de Aplicaciones Abiertas</span>
+              <span class="setting-desc">Punto luminoso estilo macOS debajo de programas en ejecución</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="show_running_indicators" onchange="updateSetting('appearance', 'show_running_indicators', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            Etiquetas Flotantes (Dockbar)
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Mostrar Etiquetas al Pasar el Mouse</span>
+              <span class="setting-desc">Muestra el nombre de cada aplicación sobre el icono</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="show_labels" onchange="updateSetting('appearance', 'show_labels', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Fuente y Tamaño de Etiqueta</span>
+              <span class="setting-desc">Tipografía y escala del nombre flotante</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <select class="select-input" id="label_font_family" onchange="updateSetting('appearance', 'label_font_family', this.value)">
+                <option value="Segoe UI">Segoe UI</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Arial">Arial</option>
+                <option value="Consolas">Consolas</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                <option value="Tahoma">Tahoma</option>
+                <option value="Verdana">Verdana</option>
+              </select>
+              <div class="slider-container" style="width:150px;">
+                <input type="range" id="label_font_size" min="9" max="22" value="12" oninput="updateSetting('appearance', 'label_font_size', parseInt(this.value)); updateLabel('lbl-fsize', this.value + ' px')">
+                <span class="slider-val" id="lbl-fsize">12 px</span>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Estilo del Texto (Negrita / Cursiva)</span>
+              <span class="setting-desc">Combina negritas o cursivas en las etiquetas flotantes</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="style-toggle-btn" id="btn_label_bold" onclick="toggleAppearanceFlag('label_bold', 'btn_label_bold')"><b>B</b> Negrita</button>
+              <button type="button" class="style-toggle-btn" id="btn_label_italic" onclick="toggleAppearanceFlag('label_italic', 'btn_label_italic')"><i>I</i> Cursiva</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Colores de Etiqueta (Fondo y Texto)</span>
+              <span class="setting-desc">Personaliza contraste de las etiquetas</span>
+            </div>
+            <div class="color-btn-wrapper">
+              <input type="color" id="label_bg_input" style="opacity:0; width:0; height:0;" onchange="updateLabelColor('label_bg', 'lbl-bg-swatch', this.value)">
+              <div class="color-swatch" id="lbl-bg-swatch" title="Color de fondo" onclick="document.getElementById('label_bg_input').click()"></div>
+              <input type="color" id="label_fg_input" style="opacity:0; width:0; height:0;" onchange="updateLabelColor('label_fg', 'lbl-fg-swatch', this.value)">
+              <div class="color-swatch" id="lbl-fg-swatch" title="Color de texto" onclick="document.getElementById('label_fg_input').click()"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Etiquetas de Accesos dentro de Carpetas
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Mostrar Etiquetas dentro de las Carpetas</span>
+              <span class="setting-desc">Desactívalo para mostrar una cuadrícula limpia de solo iconos al abrir carpetas</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="folder_show_labels" checked onchange="updateSetting('appearance', 'folder_show_labels', this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Fuente y Tamaño en Carpetas</span>
+              <span class="setting-desc">Tipografía de los nombres debajo de cada icono agrupado</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <select class="select-input" id="folder_label_font_family" onchange="updateSetting('appearance', 'folder_label_font_family', this.value)">
+                <option value="Segoe UI">Segoe UI</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Arial">Arial</option>
+                <option value="Consolas">Consolas</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                <option value="Tahoma">Tahoma</option>
+                <option value="Verdana">Verdana</option>
+              </select>
+              <div class="slider-container" style="width:150px;">
+                <input type="range" id="folder_label_font_size" min="8" max="18" value="11" oninput="updateSetting('appearance', 'folder_label_font_size', parseInt(this.value)); updateLabel('lbl-folder-fsize', this.value + ' px')">
+                <span class="slider-val" id="lbl-folder-fsize">11 px</span>
+              </div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Estilo y Color del Texto en Carpetas</span>
+              <span class="setting-desc">Negrita, cursiva y color de letra de los accesos dentro de carpetas</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="style-toggle-btn" id="btn_folder_bold" onclick="toggleAppearanceFlag('folder_label_bold', 'btn_folder_bold')"><b>B</b> Negrita</button>
+              <button type="button" class="style-toggle-btn" id="btn_folder_italic" onclick="toggleAppearanceFlag('folder_label_italic', 'btn_folder_italic')"><i>I</i> Cursiva</button>
+              <input type="color" id="folder_label_fg_input" style="opacity:0; width:0; height:0;" onchange="updateLabelColor('folder_label_fg', 'folder-lbl-fg-swatch', this.value)">
+              <div class="color-swatch" id="folder-lbl-fg-swatch" title="Color de texto en carpetas" onclick="document.getElementById('folder_label_fg_input').click()"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: ICONOS Y ELEMENTOS -->
+      <div id="tab-items" class="tab-content">
+        <!-- Buscador Universal e Inteligente -->
+        <div class="card">
+          <div class="card-title" style="justify-content: space-between; flex-wrap: wrap;">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              Buscador Universal (Apps, Store y PWAs)
+            </span>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div class="radio-group" id="search-cat-group">
+                <div class="radio-option selected" data-cat="all" onclick="setSearchCategory('all')">Todos</div>
+                <div class="radio-option" data-cat="pwa" onclick="setSearchCategory('pwa')">PWAs / Store</div>
+                <div class="radio-option" data-cat="desktop" onclick="setSearchCategory('desktop')">Escritorio</div>
+              </div>
+              <button class="btn" style="padding:5px 10px;" onclick="runAppSearch(document.getElementById('app-search-input').value, true)">Actualizar</button>
+            </div>
+          </div>
+          <div class="search-box">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="app-search-input" class="search-input" placeholder="Busca WhatsApp, Codex, ChatGPT, Claude, Excel, Chrome..." oninput="onSearchInput(this.value)">
+          </div>
+          <div class="search-results" id="app-search-results" style="max-height:280px;">
+            <div style="font-size:12px; color:var(--text-muted); padding:6px 2px;">Cargando catálogo indexado de Windows...</div>
+          </div>
+        </div>
+
+        <!-- Elementos actuales -->
+        <div class="card">
+          <div class="card-title" style="justify-content: space-between; flex-wrap: wrap;">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+              Accesos en tu Dockbar
+            </span>
+            <div style="display:flex; gap:8px; flex-wrap: wrap;">
+              <button class="btn" onclick="addProgramDialog()">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                Examinar Archivo...
+              </button>
+              <button class="btn" onclick="openActionsModal()">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Acción del Sistema
+              </button>
+              <button class="btn" onclick="addSeparator()">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Separador
+              </button>
+            </div>
+          </div>
+          <div class="items-container" id="items-list"></div>
+        </div>
+      </div>
+
+      <!-- TAB 4: WIDGETS DE ESCRITORIO -->
+      <div id="tab-widgets" class="tab-content">
+        <div class="widget-toolbar">
+          <span style="font-size:12px; color:var(--text-muted);">Haz clic en el encabezado de cualquier widget para expandir o contraer sus ajustes.</span>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="btn" style="padding:5px 11px;" onclick="setAllWidgetCards(true)">Expandir todos</button>
+            <button type="button" class="btn" style="padding:5px 11px;" onclick="setAllWidgetCards(false)">Contraer todos</button>
+          </div>
+        </div>
+
+        <!-- 1. RELOJ -->
+        <div class="card collapsible" data-wcard="clock">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Widget de Reloj y Fecha Digital
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Reloj">
+                <input type="checkbox" id="w_clock_enabled" onchange="updateWidget('clock', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño del Widget</span>
+                <span class="setting-desc">Escala visual rápida en el escritorio</span>
+              </div>
+              <div class="radio-group" id="w_clock_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Opacidad del Cristal</span>
+                <span class="setting-desc">Transparencia independiente del fondo</span>
+              </div>
+              <div class="slider-container">
+                <input type="range" id="w_clock_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('clock', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-clock-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-clock-op">88%</span>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Formato 24 Horas</span>
+                <span class="setting-desc">Muestra 14:30 en vez de 02:30 PM</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w_clock_24h" onchange="updateWidget('clock', {format_24h: this.checked})">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mostrar Segundero</span>
+                <span class="setting-desc">Por defecto desactivado</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w_clock_sec" onchange="updateWidget('clock', {show_seconds: this.checked})">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Estilo Visual del Reloj</span>
+                <span class="setting-desc">Personaliza diseño base del reloj</span>
+              </div>
+              <div class="radio-group" id="w_clock_style_group">
+                <div class="radio-option selected" data-cstyle="moderno" onclick="setClockStyle('moderno')">Moderno</div>
+                <div class="radio-option" data-cstyle="minimal" onclick="setClockStyle('minimal')">Minimal</div>
+                <div class="radio-option" data-cstyle="neon" onclick="setClockStyle('neon')">Neón</div>
+                <div class="radio-option" data-cstyle="clasico" onclick="setClockStyle('clasico')">Clásico</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Alineación de Hora y Fecha</span>
+                <span class="setting-desc">Justificación dentro del widget</span>
+              </div>
+              <div class="radio-group" id="w_clock_align_group">
+                <div class="radio-option selected" data-calign="left" onclick="setClockAlign('left')">Izquierda</div>
+                <div class="radio-option" data-calign="center" onclick="setClockAlign('center')">Centro</div>
+                <div class="radio-option" data-calign="right" onclick="setClockAlign('right')">Derecha</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Color de la Hora</span>
+                <span class="setting-desc">Color personalizado para los dígitos del reloj</span>
+              </div>
+              <div class="color-btn-wrapper">
+                <input type="color" id="w_clock_tcol_input" style="opacity:0; width:0; height:0;" onchange="updateClockColor('time_color', 'w_clock_tcol_swatch', this.value)">
+                <div class="color-swatch" id="w_clock_tcol_swatch" onclick="document.getElementById('w_clock_tcol_input').click()"></div>
+                <button class="btn" onclick="document.getElementById('w_clock_tcol_input').click()">Elegir Color</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Color de la Fecha</span>
+                <span class="setting-desc">Color personalizado para el día y mes</span>
+              </div>
+              <div class="color-btn-wrapper">
+                <input type="color" id="w_clock_dcol_input" style="opacity:0; width:0; height:0;" onchange="updateClockColor('date_color', 'w_clock_dcol_swatch', this.value)">
+                <div class="color-swatch" id="w_clock_dcol_swatch" onclick="document.getElementById('w_clock_dcol_input').click()"></div>
+                <button class="btn" onclick="document.getElementById('w_clock_dcol_input').click()">Elegir Color</button>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="clock"></div>
+          </div>
+        </div>
+
+        <!-- 2. TO-DO LIST (CUADERNOS) -->
+        <div class="card collapsible" data-wcard="todo_list">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              Widget de Lista de Tareas (Cuadernos con Pestañas)
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar To-Do">
+                <input type="checkbox" id="w_todo_enabled" onchange="updateWidget('todo_list', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Alargar Automáticamente según Tareas</span>
+                <span class="setting-desc">El widget crece solo para mostrar la lista completa y activa scroll al llegar al tope</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w_todo_autogrow" checked onchange="updateWidget('todo_list', {auto_grow: this.checked})">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mostrar Vista de Tareas Completadas</span>
+                <span class="setting-desc">También puedes alternarla desde el botón "✓ Ver completados" directo en el widget</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="w_todo_showcomp" onchange="updateWidget('todo_list', {show_completed: this.checked})">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Sincronización Outlook / Power Automate + MCP</span>
+                <span class="setting-desc">Lee automáticamente todo_inbox.json (con deduplicación) hacia la pestaña Outlook</span>
+              </div>
+              <button type="button" class="btn" onclick="ingestTodoInboxNow()">Importar Bandeja Ahora</button>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Tamaño del Widget</span></div>
+              <div class="radio-group" id="w_todo_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Opacidad del Cristal</span></div>
+              <div class="slider-container">
+                <input type="range" id="w_todo_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('todo_list', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-todo-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-todo-op">88%</span>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="todo_list"></div>
+          </div>
+        </div>
+
+        <!-- 3. RENDIMIENTO -->
+        <div class="card collapsible" data-wcard="system_monitor">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Widget de Rendimiento (CPU, RAM y Disco)
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Monitor">
+                <input type="checkbox" id="w_sys_enabled" onchange="updateWidget('system_monitor', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Tamaño del Widget</span></div>
+              <div class="radio-group" id="w_sys_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Opacidad del Cristal</span></div>
+              <div class="slider-container">
+                <input type="range" id="w_sys_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('system_monitor', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-sys-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-sys-op">88%</span>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="system_monitor"></div>
+          </div>
+        </div>
+
+        <!-- 4. QUICK ACCESS -->
+        <div class="card collapsible" data-wcard="quick_access">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              Widget de Accesos Rápidos y Carpetas
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Accesos Rápidos">
+                <input type="checkbox" id="w_qa_enabled" onchange="updateWidget('quick_access', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Modo de Interacción</span>
+                <span class="setting-desc">Comportamiento al interactuar con el cursor</span>
+              </div>
+              <div class="radio-group" id="qa-mode-group">
+                <div class="radio-option" data-mode="static" onclick="setQaMode('static')">Estático</div>
+                <div class="radio-option" data-mode="hover_open" onclick="setQaMode('hover_open')">Abrir al pasar</div>
+                <div class="radio-option" data-mode="hover_expand" onclick="setQaMode('hover_expand')">Expandir al pasar</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Tamaño del Widget</span></div>
+              <div class="radio-group" id="w_qa_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Opacidad del Cristal</span></div>
+              <div class="slider-container">
+                <input type="range" id="w_qa_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('quick_access', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-qa-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-qa-op">88%</span>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="quick_access"></div>
+          </div>
+        </div>
+
+        <!-- 5. PWAs -->
+        <div class="card collapsible" data-wcard="pwa_apps">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              Widget de Aplicaciones Web / PWA
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Barra de PWAs">
+                <input type="checkbox" id="w_pwa_enabled" onchange="updateWidget('pwa_apps', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Tamaño del Widget</span></div>
+              <div class="radio-group" id="w_pwa_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Opacidad del Cristal</span></div>
+              <div class="slider-container">
+                <input type="range" id="w_pwa_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('pwa_apps', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-pwa-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-pwa-op">88%</span>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="pwa_apps"></div>
+            <div style="margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06);">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                <div>
+                  <div class="setting-label">Aplicaciones PWA y Apps Instaladas <span id="pwa-count-badge" style="font-size:11px; color:#93c5fd; font-weight:600;"></span></div>
+                  <div class="setting-desc">Marca cuáles quieres mostrar en el widget de escritorio</div>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn" onclick="loadInstalledPwas(true)">Actualizar</button>
+                  <button class="btn" onclick="addCustomPwaUrl()">
+                    <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Añadir URL Manual
+                  </button>
+                </div>
+              </div>
+              <div class="search-box" style="margin-bottom:8px;">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="pwa-filter-input" class="search-input" placeholder="Filtrar PWAs (WhatsApp, Codex, ChatGPT, Claude, Gemini)..." oninput="renderInstalledPwas()">
+              </div>
+              <div class="search-results" id="installed-pwas-list" style="max-height:340px;">
+                <div style="font-size:12px; color:var(--text-muted);">Detectando PWAs instaladas...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL: COLECCIONES DE ICONOS PNG -->
+  <div class="modal-backdrop" id="icon-pack-modal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>
+          <svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span id="icon-modal-title">Colecciones de Iconos PNG</span>
+        </h3>
+        <button class="btn-icon" onclick="closeIconModal()">
+          <svg class="ico" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="icon-suggestions-wrap" style="display:none;">
+        <div class="suggestions-label" id="icon-suggestions-label">Sugerencias recomendadas</div>
+        <div class="suggestions-row" id="icon-suggestions-row"></div>
+      </div>
+      <div class="pack-tabs" id="pack-tabs"></div>
+      <div class="pack-filter-bar">
+        <input type="text" id="pack-filter" class="search-input" autocomplete="off" placeholder="Filtrar icono por nombre (ej. Excel, Folder, Code, WhatsApp)..." oninput="renderPackGrid()">
+        <div class="pack-size-group" title="Tamaño de vista previa">
+          <button class="pack-size-btn" data-sz="md" onclick="setPackGridSize('md', this)">M</button>
+          <button class="pack-size-btn active" data-sz="lg" onclick="setPackGridSize('lg', this)">G</button>
+          <button class="pack-size-btn" data-sz="xl" onclick="setPackGridSize('xl', this)">XL</button>
+        </div>
+        <div id="pack-overflow-wrap" class="pack-overflow-wrap"></div>
+      </div>
+      <div class="pack-grid" id="pack-grid"></div>
+      <div class="modal-foot">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" onclick="pickCustomIconFile()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            Buscar en Explorador de Windows (PNG / ICO / EXE)...
+          </button>
+          <button class="btn" onclick="resetCurrentModalIcon()">
+            <svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            Restaurar icono original
+          </button>
+        </div>
+        <button class="btn" onclick="closeIconModal()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: ACCIONES DEL SISTEMA -->
+  <div class="modal-backdrop" id="actions-modal">
+    <div class="modal-box" style="max-width:440px;">
+      <div class="modal-head">
+        <h3>
+          <svg class="ico ico-accent" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Añadir Acción del Sistema
+        </h3>
+        <button class="btn-icon" onclick="closeActionsModal()">
+          <svg class="ico" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div style="padding:16px 20px; display:flex; flex-direction:column; gap:8px;" id="actions-list"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span style="font-size:12px; color:var(--text-muted);">Alioth Dockbar • Edición Corporativa sin Permisos de Admin</span>
+    <button class="btn" onclick="window.close()">Cerrar Ventana</button>
+  </footer>
+
+  <script>
+    let currentConfig = null;
+    let iconPacksCache = null;
+    let activePackIdx = -1;
+    let editingItemIdx = null;
+    let editingChildIdx = null;
+    let searchTimer = null;
+
+    const SVG = {
+      up: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>',
+      down: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>',
+      img: '<svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>',
+      trash: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+      sep: '<svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+      folder: '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+      bolt: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+      plus: '<svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+      undo: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>'
+    };
+
+    const SYSTEM_ACTIONS = [
+      {id: "show_desktop", name: "Mostrar Escritorio"},
+      {id: "display_settings", name: "Configuración de Pantalla"},
+      {id: "sound_settings", name: "Sonido y Volumen"},
+      {id: "apps_features", name: "Desinstalar y Aplicaciones"},
+      {id: "control_panel", name: "Panel de Control Clásico"},
+      {id: "network_settings", name: "Red e Internet"},
+      {id: "bluetooth_settings", name: "Bluetooth y Dispositivos"},
+      {id: "taskmgr", name: "Administrador de Tareas"},
+      {id: "recycle_bin", name: "Papelera de Reciclaje"},
+      {id: "snipping_tool", name: "Herramienta Recortes"},
+      {id: "settings", name: "Configuración de Windows"},
+      {id: "dock_settings", name: "Configuración de Alioth Dockbar"},
+      {id: "dock_exit", name: "Detener Alioth Dockbar"},
+      {id: "lock_pc", name: "Bloquear Equipo"},
+      {id: "logoff_pc", name: "Cerrar Sesión"},
+      {id: "restart_pc", name: "Reiniciar Equipo"},
+      {id: "shutdown_pc", name: "Apagar Equipo"}
+    ];
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/config');
+        currentConfig = await res.json();
+        renderConfigUI(currentConfig);
+        runAppSearch('');
+        loadInstalledPwas();
+
+        // If launched directly from "Cambiar icono..." on the Dockbar or inside a folder, jump straight into the Icon Collections Picker
+        const params = new URLSearchParams(window.location.search);
+        const pickId = params.get('pick_icon_id');
+        const childId = params.get('child_id');
+        if (pickId && currentConfig && Array.isArray(currentConfig.items)) {
+          const idx = currentConfig.items.findIndex(it => String(it.id) === String(pickId));
+          if (idx >= 0) {
+            const tabBtns = document.querySelectorAll('.tab-btn');
+            if (tabBtns[2]) switchTab('items', tabBtns[2]);
+            let cIdx = null;
+            if (childId) {
+              const grp = currentConfig.items[idx];
+              const children = grp.items || grp.children || [];
+              const found = children.findIndex(ch => String(ch.id) === String(childId));
+              if (found >= 0) cIdx = found;
+            }
+            await openIconModal(idx, cIdx);
+          }
+        }
+      } catch (e) {
+        console.error("Error loading config:", e);
+      }
+    }
+
+    let installedPwasCache = [];
+
+    async function loadInstalledPwas(force = false) {
+      const box = document.getElementById('installed-pwas-list');
+      if (!box) return;
+      try {
+        const res = await fetch('/api/installed_pwas' + (force ? '?force=1' : ''));
+        const data = await res.json();
+        installedPwasCache = data.pwas || [];
+        const badge = document.getElementById('pwa-count-badge');
+        if (badge) badge.innerText = installedPwasCache.length ? `(${installedPwasCache.length} detectadas)` : '';
+        renderInstalledPwas();
+      } catch (e) {
+        box.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">No se pudieron leer las PWAs instaladas.</div>';
+      }
+    }
+
+    function pwaKey(p) {
+      if (p.app_id) return 'appid:' + p.app_id.toLowerCase();
+      if (p.target) return 'tgt:' + (p.target + '|' + (p.args || '')).toLowerCase();
+      if (p.url) return 'url:' + p.url.toLowerCase();
+      return 'id:' + (p.id || p.name || '').toLowerCase();
+    }
+
+    function renderInstalledPwas() {
+      const box = document.getElementById('installed-pwas-list');
+      if (!box) return;
+      const selected = ((currentConfig && currentConfig.widgets && currentConfig.widgets.pwa_apps && currentConfig.widgets.pwa_apps.apps) || []);
+      const selectedKeys = new Set(selected.map(pwaKey));
+
+      // Merge installed PWAs + any custom selected URLs not in installed list
+      const installedKeys = new Set(installedPwasCache.map(pwaKey));
+      const merged = [...installedPwasCache];
+      selected.forEach(s => {
+        if (!installedKeys.has(pwaKey(s))) {
+          merged.push({...s, browser: s.url ? 'Web URL' : (s.browser || 'PWA')});
+        }
+      });
+
+      const qInput = document.getElementById('pwa-filter-input');
+      const fq = (qInput ? qInput.value : '').trim().toLowerCase();
+      const fqCompact = fq.replace(/\s+/g, '');
+      const filtered = fq ? merged.filter(p => {
+        const hay = `${p.name || ''} ${p.args || ''} ${p.url || ''} ${p.browser || ''}`.toLowerCase();
+        return hay.includes(fq) || hay.replace(/\s+/g, '').includes(fqCompact);
+      }) : merged;
+
+      if (!filtered.length) {
+        box.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:6px;">No hay coincidencias. Prueba otro término o pulsa "Actualizar".</div>';
+        return;
+      }
+
+      box.innerHTML = '';
+      filtered.forEach(pwa => {
+        const k = pwaKey(pwa);
+        const isChecked = selectedKeys.has(k);
+        const row = document.createElement('div');
+        row.className = 'search-row';
+        const thumb = pwa.icon_src ? `/api/icon_preview?path=${encodeURIComponent(pwa.icon_src)}&name=${encodeURIComponent(pwa.name)}` : '/assets/logo.png';
+        row.innerHTML = `
+          <div class="search-meta">
+            <img src="${thumb}" loading="lazy" alt="">
+            <div class="search-text">
+              <div class="search-name">${escapeHtml(pwa.name)}</div>
+              <div class="search-path">${escapeHtml(pwa.url || pwa.args || pwa.target || '')}</div>
+            </div>
+            <span class="source-tag">${escapeHtml(pwa.browser || 'PWA')}</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" ${isChecked ? 'checked' : ''}>
+            <span class="slider"></span>
+          </label>
+        `;
+        row.querySelector('input').onchange = (ev) => togglePwaSelection(pwa, ev.target.checked);
+        box.appendChild(row);
+      });
+    }
+
+    async function togglePwaSelection(pwa, enable) {
+      if (!currentConfig) return;
+      if (!currentConfig.widgets) currentConfig.widgets = {};
+      if (!currentConfig.widgets.pwa_apps) currentConfig.widgets.pwa_apps = {};
+      let apps = [...(currentConfig.widgets.pwa_apps.apps || [])];
+      const k = pwaKey(pwa);
+      apps = apps.filter(a => pwaKey(a) !== k);
+      if (enable) apps.push(pwa);
+      currentConfig.widgets.pwa_apps.apps = apps;
+      await updateWidget('pwa_apps', {apps: apps});
+    }
+
+    async function addCustomPwaUrl() {
+      const name = prompt('Nombre de la Web App (ej. Claude, WhatsApp):');
+      if (!name || !name.trim()) return;
+      const url = prompt('URL de la Web App (ej. https://claude.ai):');
+      if (!url || !url.trim()) return;
+      await togglePwaSelection({
+        id: 'url_' + Date.now(),
+        name: name.trim(),
+        url: url.trim(),
+        browser: 'Web URL'
+      }, true);
+      renderInstalledPwas();
+    }
+
+    function renderSizeRadios(containerId, wId, currentScale) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      const presets = [
+        {label: 'Pequeño', val: 0.8},
+        {label: 'Mediano', val: 1.0},
+        {label: 'Grande', val: 1.3},
+        {label: 'Extra', val: 1.6}
+      ];
+      const s = parseFloat(currentScale || 1.0);
+      container.innerHTML = presets.map(p => {
+        const sel = Math.abs(s - p.val) < 0.12 ? 'selected' : '';
+        return `<div class="radio-option ${sel}" onclick="selectWidgetSize('${containerId}', '${wId}', ${p.val}, this)">${p.label}</div>`;
+      }).join('');
+    }
+
+    function selectWidgetSize(containerId, wId, val, el) {
+      document.querySelectorAll(`#${containerId} .radio-option`).forEach(x => x.classList.remove('selected'));
+      el.classList.add('selected');
+      const wInp = document.getElementById(`w_cw_${wId}`);
+      const hInp = document.getElementById(`w_ch_${wId}`);
+      if (wInp) wInp.value = '';
+      if (hInp) hInp.value = '';
+      updateWidget(wId, {size_scale: val, custom_w: null, custom_h: null});
+    }
+
+    let _widgetCardsInitialized = false;
+
+    function toggleWidgetCard(titleEl) {
+      const card = titleEl.closest('.card.collapsible');
+      if (card) card.classList.toggle('expanded');
+    }
+
+    function setAllWidgetCards(expand) {
+      document.querySelectorAll('#tab-widgets .card.collapsible').forEach(c => {
+        c.classList.toggle('expanded', !!expand);
+      });
+    }
+
+    function mountWidgetTypographyControls() {
+      const defaults = {
+        clock: {w: 270, h: 112},
+        todo_list: {w: 320, h: 260},
+        system_monitor: {w: 270, h: 175},
+        quick_access: {w: 280, h: 78},
+        pwa_apps: {w: 260, h: 74}
+      };
+      document.querySelectorAll('.widget-typo-mount').forEach(mount => {
+        if (mount.dataset.mounted === '1') return;
+        mount.dataset.mounted = '1';
+        const wId = mount.getAttribute('data-wid');
+        const def = defaults[wId] || {w: 270, h: 120};
+        mount.className = 'widget-typo-section';
+        mount.innerHTML = `
+          <div class="widget-typo-heading">Estilo Visual, Imagen / Color de Fondo</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Estilo del Widget</span>
+              <span class="setting-desc">Tema visual de bordes, cristal y contraste</span>
+            </div>
+            <select class="select-input" id="w_sty_${wId}" onchange="updateWidget('${wId}', {widget_style: this.value})">
+              <option value="cristal">Cristal Oscuro (Predeterminado)</option>
+              <option value="neon">Neón Ciberpunk</option>
+              <option value="minimal">Minimalista Suave</option>
+              <option value="oled">Negro OLED Alto Contraste</option>
+              <option value="acrilico">Acrílico Azul Profundo</option>
+              <option value="editorial">Editorial Dorado</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Color o Imagen de Fondo</span>
+              <span class="setting-desc">Personaliza el fondo del widget con un color sólido o una fotografía</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <input type="color" id="w_bgc_inp_${wId}" style="opacity:0; width:0; height:0;" onchange="setWidgetBgColor('${wId}', this.value)">
+              <div class="color-swatch" id="w_bgc_sw_${wId}" title="Elegir color de fondo" onclick="document.getElementById('w_bgc_inp_${wId}').click()"></div>
+              <button type="button" class="btn" style="padding:6px 10px;" onclick="pickWidgetBgImage('${wId}')">${SVG.img} Imagen...</button>
+              <button type="button" class="btn" style="padding:6px 10px;" onclick="clearWidgetCustomBg('${wId}')">Original</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Velo Oscuro sobre Imagen de Fondo</span>
+              <span class="setting-desc">Asegura que el texto del widget se lea nítido sobre cualquier imagen</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="w_bgdim_${wId}" min="0.0" max="0.85" step="0.05" value="0.45" oninput="updateWidget('${wId}', {bg_image_dim: parseFloat(this.value)}); updateLabel('lbl_bgdim_${wId}', Math.round(this.value*100)+'%')">
+              <span class="slider-val" id="lbl_bgdim_${wId}">45%</span>
+            </div>
+          </div>
+
+          <div class="widget-typo-heading" style="margin-top:8px;">Auto-Desplegable, Minimizar y Posición Fija</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Auto-Desplegable al Pasar el Mouse</span>
+              <span class="setting-desc">Permanece contraído en una barra compacta y se despliega al acercar el cursor</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="w_autocol_${wId}" onchange="updateWidget('${wId}', {auto_collapse: this.checked})">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Minimizar / Bloquear Posición Fija</span>
+              <span class="setting-desc">Evita mover el widget por accidente o contráelo manualmente</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="style-toggle-btn" id="w_minbtn_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'minimized', 'w_minbtn_${wId}')">— Minimizado</button>
+              <button type="button" class="style-toggle-btn" id="w_lock_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'lock_position', 'w_lock_${wId}')">🔒 Posición Fija</button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Anclaje Rápido en Pantalla</span>
+              <span class="setting-desc">Coloca el widget exactamente en una esquina o al centro superior</span>
+            </div>
+            <div style="display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end;">
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_left', ${def.w}, ${def.h})">↖ Sup Izq</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_center', ${def.w}, ${def.h})">↑ Centro</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_right', ${def.w}, ${def.h})">↗ Sup Der</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_left', ${def.w}, ${def.h})">↙ Inf Izq</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_right', ${def.w}, ${def.h})">↘ Inf Der</button>
+            </div>
+          </div>
+
+          <div class="widget-typo-heading" style="margin-top:8px;">Tipografía, Separación y Dimensiones</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Tipo y Estilo de Letra</span>
+              <span class="setting-desc">Fuente, negrita y cursiva del texto del widget</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <select class="select-input" id="w_ff_${wId}" onchange="updateWidget('${wId}', {font_family: this.value})">
+                <option value="Segoe UI">Segoe UI</option>
+                <option value="Calibri">Calibri</option>
+                <option value="Arial">Arial</option>
+                <option value="Consolas">Consolas</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Trebuchet MS">Trebuchet MS</option>
+                <option value="Tahoma">Tahoma</option>
+                <option value="Verdana">Verdana</option>
+              </select>
+              <button type="button" class="style-toggle-btn" id="w_bold_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'font_bold', 'w_bold_${wId}')"><b>B</b></button>
+              <button type="button" class="style-toggle-btn" id="w_ital_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'font_italic', 'w_ital_${wId}')"><i>I</i></button>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Tamaño de Letra</span>
+              <span class="setting-desc">Escala tipográfica independiente del widget</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="w_fsc_${wId}" min="0.65" max="1.70" step="0.05" value="1.0" oninput="updateWidget('${wId}', {font_scale: parseFloat(this.value)}); updateLabel('lbl_fsc_${wId}', Math.round(this.value*100)+'%')">
+              <span class="slider-val" id="lbl_fsc_${wId}">100%</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Separación de Textos / Elementos</span>
+              <span class="setting-desc">Espaciado interno entre filas, iconos o renglones</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="w_isp_${wId}" min="0.60" max="1.80" step="0.05" value="1.0" oninput="updateWidget('${wId}', {item_spacing: parseFloat(this.value)}); updateLabel('lbl_isp_${wId}', Math.round(this.value*100)+'%')">
+              <span class="slider-val" id="lbl_isp_${wId}">100%</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Redimensionar (Ancho × Alto px)</span>
+              <span class="setting-desc">Ajusta medidas exactas o arrastra la esquina inferior derecha del widget</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <input type="number" class="dim-input" id="w_cw_${wId}" min="120" max="900" placeholder="${def.w}" title="Ancho en px" onchange="applyWidgetCustomDims('${wId}', ${def.w}, ${def.h})">
+              <span style="font-size:12px; color:var(--text-muted);">×</span>
+              <input type="number" class="dim-input" id="w_ch_${wId}" min="50" max="720" placeholder="${def.h}" title="Alto en px" onchange="applyWidgetCustomDims('${wId}', ${def.w}, ${def.h})">
+              <button type="button" class="btn" style="padding:5px 9px;" onclick="resetWidgetAutoDims('${wId}')">Auto</button>
+            </div>
+          </div>
+        `;
+      });
+    }
+
+    function syncWidgetTypographyUI(wId, wCfg) {
+      const cfg = wCfg || {};
+      const styEl = document.getElementById(`w_sty_${wId}`);
+      if (styEl) styEl.value = cfg.widget_style || 'cristal';
+      const bgc = cfg.bg_color || '#12141a';
+      const bgSw = document.getElementById(`w_bgc_sw_${wId}`);
+      if (bgSw) bgSw.style.backgroundColor = bgc;
+      const bgInp = document.getElementById(`w_bgc_inp_${wId}`);
+      if (bgInp) bgInp.value = bgc;
+      const bgDim = cfg.bg_image_dim ?? 0.45;
+      const bgDimEl = document.getElementById(`w_bgdim_${wId}`);
+      if (bgDimEl) bgDimEl.value = bgDim;
+      updateLabel(`lbl_bgdim_${wId}`, Math.round(bgDim * 100) + '%');
+
+      const autoCol = document.getElementById(`w_autocol_${wId}`);
+      if (autoCol) autoCol.checked = !!cfg.auto_collapse;
+      const minBtn = document.getElementById(`w_minbtn_${wId}`);
+      if (minBtn) minBtn.classList.toggle('active', !!cfg.minimized);
+      const lockBtn = document.getElementById(`w_lock_${wId}`);
+      if (lockBtn) lockBtn.classList.toggle('active', !!cfg.lock_position);
+
+      const ff = document.getElementById(`w_ff_${wId}`);
+      if (ff) ff.value = cfg.font_family || (wId === 'clock' && cfg.clock_style === 'clasico' ? 'Georgia' : 'Segoe UI');
+      const bBtn = document.getElementById(`w_bold_${wId}`);
+      if (bBtn) bBtn.classList.toggle('active', !!cfg.font_bold);
+      const iBtn = document.getElementById(`w_ital_${wId}`);
+      if (iBtn) iBtn.classList.toggle('active', !!cfg.font_italic);
+      const fsc = cfg.font_scale ?? 1.0;
+      const fscEl = document.getElementById(`w_fsc_${wId}`);
+      if (fscEl) fscEl.value = fsc;
+      updateLabel(`lbl_fsc_${wId}`, Math.round(fsc * 100) + '%');
+      const isp = cfg.item_spacing ?? 1.0;
+      const ispEl = document.getElementById(`w_isp_${wId}`);
+      if (ispEl) ispEl.value = isp;
+      updateLabel(`lbl_isp_${wId}`, Math.round(isp * 100) + '%');
+      const cwEl = document.getElementById(`w_cw_${wId}`);
+      const chEl = document.getElementById(`w_ch_${wId}`);
+      if (cwEl) cwEl.value = (cfg.custom_w !== null && cfg.custom_w !== undefined) ? cfg.custom_w : '';
+      if (chEl) chEl.value = (cfg.custom_h !== null && cfg.custom_h !== undefined) ? cfg.custom_h : '';
+    }
+
+    function setWidgetBgColor(wId, hex) {
+      const sw = document.getElementById(`w_bgc_sw_${wId}`);
+      if (sw) sw.style.backgroundColor = hex;
+      updateWidget(wId, {bg_color: hex});
+    }
+
+    async function pickWidgetBgImage(wId) {
+      try {
+        await fetch('/api/pick_widget_bg', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({widget_id: wId})
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    function clearWidgetCustomBg(wId) {
+      const sw = document.getElementById(`w_bgc_sw_${wId}`);
+      if (sw) sw.style.backgroundColor = '#12141a';
+      updateWidget(wId, {bg_color: '', bg_image: ''});
+    }
+
+    function snapWidgetPreset(wId, preset, defW, defH) {
+      const sw = window.screen.width || 1920;
+      const sh = window.screen.height || 1080;
+      const cfg = (currentConfig && currentConfig.widgets && currentConfig.widgets[wId]) || {};
+      const w = cfg.custom_w || defW;
+      const h = cfg.custom_h || defH;
+      let nx = 22, ny = 42;
+      if (preset === 'top_center') { nx = Math.round((sw - w) / 2); ny = 42; }
+      else if (preset === 'top_right') { nx = sw - w - 22; ny = 42; }
+      else if (preset === 'bottom_left') { nx = 22; ny = sh - h - 68; }
+      else if (preset === 'bottom_right') { nx = sw - w - 22; ny = sh - h - 68; }
+      updateWidget(wId, {x: nx, y: ny, anchor_preset: preset});
+    }
+
+    async function ingestTodoInboxNow() {
+      try {
+        await fetch('/api/todo/ingest', {method: 'POST'});
+      } catch (e) { console.error(e); }
+    }
+
+    function toggleWidgetStyleFlag(wId, key, btnId) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      const next = !btn.classList.contains('active');
+      btn.classList.toggle('active', next);
+      if (currentConfig && currentConfig.widgets && currentConfig.widgets[wId]) {
+        currentConfig.widgets[wId][key] = next;
+      }
+      updateWidget(wId, {[key]: next});
+    }
+
+    function applyWidgetCustomDims(wId, defW, defH) {
+      const cwEl = document.getElementById(`w_cw_${wId}`);
+      const chEl = document.getElementById(`w_ch_${wId}`);
+      let cw = parseInt(cwEl ? cwEl.value : '', 10);
+      let ch = parseInt(chEl ? chEl.value : '', 10);
+      if (isNaN(cw) || cw < 110) cw = defW;
+      if (isNaN(ch) || ch < 48) ch = defH;
+      if (cwEl) cwEl.value = cw;
+      if (chEl) chEl.value = ch;
+      updateWidget(wId, {custom_w: cw, custom_h: ch});
+    }
+
+    function resetWidgetAutoDims(wId) {
+      const cwEl = document.getElementById(`w_cw_${wId}`);
+      const chEl = document.getElementById(`w_ch_${wId}`);
+      if (cwEl) cwEl.value = '';
+      if (chEl) chEl.value = '';
+      const payload = {custom_w: null, custom_h: null};
+      if (wId === 'todo_list') {
+        payload.auto_grow = true;
+        const tdAg = document.getElementById('w_todo_autogrow');
+        if (tdAg) tdAg.checked = true;
+      }
+      updateWidget(wId, payload);
+    }
+
+    function renderConfigUI(cfg) {
+      if (!cfg) return;
+
+      const gen = cfg.general || {};
+      const pos = gen.position || 'bottom';
+      document.querySelectorAll('#pos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-pos') === pos);
+      });
+      document.getElementById('autohide').checked = gen.autohide !== false;
+      const openWinEl = document.getElementById('show_open_windows');
+      if (openWinEl) openWinEl.checked = !!gen.show_open_windows;
+      document.getElementById('start_with_windows').checked = !!gen.start_with_windows;
+      document.getElementById('locked').checked = !!gen.locked;
+
+      const app = cfg.appearance || {};
+      document.getElementById('edge_offset').value = app.edge_offset ?? 0;
+      updateLabel('lbl-edge', (app.edge_offset ?? 0) + ' px');
+
+      document.getElementById('base_icon_size').value = app.base_icon_size ?? 48;
+      updateLabel('lbl-size', (app.base_icon_size ?? 48) + ' px');
+
+      document.getElementById('max_zoom').value = app.max_zoom ?? 1.7;
+      updateLabel('lbl-zoom', (app.max_zoom ?? 1.7) + 'x');
+
+      document.getElementById('icon_spacing').value = app.icon_spacing ?? 10;
+      updateLabel('lbl-spacing', (app.icon_spacing ?? 10) + ' px');
+
+      document.getElementById('corner_radius').value = app.corner_radius ?? 20;
+      updateLabel('lbl-rad', (app.corner_radius ?? 20) + ' px');
+      const roundAllEl = document.getElementById('round_all_corners');
+      if (roundAllEl) roundAllEl.checked = app.round_all_corners !== false;
+
+      const bg = app.bg_color || '#181a20';
+      document.getElementById('bg-swatch').style.backgroundColor = bg;
+      document.getElementById('bg_color_input').value = bg;
+
+      const op = app.bg_opacity ?? 0.82;
+      document.getElementById('bg_opacity').value = op;
+      updateLabel('lbl-op', Math.round(op * 100) + ' %');
+
+      const effVal = app.launch_effect || (app.bounce_on_launch === false ? 'ninguno' : 'gota_energia');
+      const effSel = document.getElementById('launch_effect');
+      if (effSel) effSel.value = effVal;
+      const effSpd = app.launch_effect_speed ?? 1.0;
+      const effSpdEl = document.getElementById('launch_effect_speed');
+      if (effSpdEl) effSpdEl.value = effSpd;
+      updateLabel('lbl-eff-speed', parseFloat(effSpd).toFixed(1) + 'x');
+      const effCol = app.launch_effect_color || '#38bdf8';
+      const effSw = document.getElementById('eff-color-swatch');
+      if (effSw) effSw.style.backgroundColor = effCol;
+      const effInp = document.getElementById('launch_effect_color_input');
+      if (effInp) effInp.value = effCol;
+
+      document.getElementById('show_running_indicators').checked = app.show_running_indicators !== false;
+
+      document.getElementById('show_labels').checked = app.show_labels !== false;
+      document.getElementById('label_font_family').value = app.label_font_family || 'Segoe UI';
+      document.getElementById('label_font_size').value = app.label_font_size ?? 12;
+      updateLabel('lbl-fsize', (app.label_font_size ?? 12) + ' px');
+      const bLblBold = document.getElementById('btn_label_bold');
+      if (bLblBold) bLblBold.classList.toggle('active', !!app.label_bold);
+      const bLblItal = document.getElementById('btn_label_italic');
+      if (bLblItal) bLblItal.classList.toggle('active', !!app.label_italic);
+
+      const lbg = app.label_bg || '#121318';
+      const lfg = app.label_fg || '#ffffff';
+      document.getElementById('lbl-bg-swatch').style.backgroundColor = lbg;
+      document.getElementById('label_bg_input').value = lbg;
+      document.getElementById('lbl-fg-swatch').style.backgroundColor = lfg;
+      document.getElementById('label_fg_input').value = lfg;
+
+      // Folder shortcut labels
+      const fShow = document.getElementById('folder_show_labels');
+      if (fShow) fShow.checked = app.folder_show_labels !== false;
+      const fFam = document.getElementById('folder_label_font_family');
+      if (fFam) fFam.value = app.folder_label_font_family || 'Segoe UI';
+      const fSz = app.folder_label_font_size ?? 11;
+      const fSzEl = document.getElementById('folder_label_font_size');
+      if (fSzEl) fSzEl.value = fSz;
+      updateLabel('lbl-folder-fsize', fSz + ' px');
+      const bFldBold = document.getElementById('btn_folder_bold');
+      if (bFldBold) bFldBold.classList.toggle('active', !!app.folder_label_bold);
+      const bFldItal = document.getElementById('btn_folder_italic');
+      if (bFldItal) bFldItal.classList.toggle('active', !!app.folder_label_italic);
+      const flfg = app.folder_label_fg || '#dae2ee';
+      const flSw = document.getElementById('folder-lbl-fg-swatch');
+      if (flSw) flSw.style.backgroundColor = flfg;
+      const flInp = document.getElementById('folder_label_fg_input');
+      if (flInp) flInp.value = flfg;
+
+      // Widgets
+      mountWidgetTypographyControls();
+      const w = cfg.widgets || {};
+      const wc = w.clock || {};
+      document.getElementById('w_clock_enabled').checked = !!wc.enabled;
+      document.getElementById('w_clock_24h').checked = wc.format_24h !== false;
+      document.getElementById('w_clock_sec').checked = !!wc.show_seconds;
+      document.getElementById('w_clock_op').value = wc.opacity ?? 0.88;
+      updateLabel('lbl-w-clock-op', Math.round((wc.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_clock_size', 'clock', wc.size_scale);
+      const cStyle = wc.clock_style || 'moderno';
+      document.querySelectorAll('#w_clock_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cstyle') === cStyle);
+      });
+      const cAlign = wc.alignment || 'left';
+      document.querySelectorAll('#w_clock_align_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-calign') === cAlign);
+      });
+      const tCol = wc.time_color || '#ffffff';
+      const dCol = wc.date_color || '#cbd5e1';
+      document.getElementById('w_clock_tcol_swatch').style.backgroundColor = tCol;
+      document.getElementById('w_clock_tcol_input').value = tCol;
+      document.getElementById('w_clock_dcol_swatch').style.backgroundColor = dCol;
+      document.getElementById('w_clock_dcol_input').value = dCol;
+
+      applySavedPanelBounds(cfg.panel_bounds);
+
+      const wt = w.todo_list || {};
+      document.getElementById('w_todo_enabled').checked = !!wt.enabled;
+      const tdAg = document.getElementById('w_todo_autogrow');
+      if (tdAg) tdAg.checked = wt.auto_grow !== false;
+      const tdSc = document.getElementById('w_todo_showcomp');
+      if (tdSc) tdSc.checked = !!wt.show_completed;
+      document.getElementById('w_todo_op').value = wt.opacity ?? 0.88;
+      updateLabel('lbl-w-todo-op', Math.round((wt.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_todo_size', 'todo_list', wt.size_scale);
+
+      const ws = w.system_monitor || {};
+      document.getElementById('w_sys_enabled').checked = !!ws.enabled;
+      document.getElementById('w_sys_op').value = ws.opacity ?? 0.88;
+      updateLabel('lbl-w-sys-op', Math.round((ws.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_sys_size', 'system_monitor', ws.size_scale);
+
+      const wq = w.quick_access || {};
+      document.getElementById('w_qa_enabled').checked = !!wq.enabled;
+      document.getElementById('w_qa_op').value = wq.opacity ?? 0.88;
+      updateLabel('lbl-w-qa-op', Math.round((wq.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_qa_size', 'quick_access', wq.size_scale);
+      const qaMode = wq.mode || 'hover_expand';
+      document.querySelectorAll('#qa-mode-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-mode') === qaMode);
+      });
+
+      const wp = w.pwa_apps || {};
+      document.getElementById('w_pwa_enabled').checked = !!wp.enabled;
+      document.getElementById('w_pwa_op').value = wp.opacity ?? 0.88;
+      updateLabel('lbl-w-pwa-op', Math.round((wp.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_pwa_size', 'pwa_apps', wp.size_scale);
+
+      syncWidgetTypographyUI('clock', wc);
+      syncWidgetTypographyUI('todo_list', wt);
+      syncWidgetTypographyUI('system_monitor', ws);
+      syncWidgetTypographyUI('quick_access', wq);
+      syncWidgetTypographyUI('pwa_apps', wp);
+
+      if (!_widgetCardsInitialized) {
+        _widgetCardsInitialized = true;
+        let anyExpanded = false;
+        document.querySelectorAll('#tab-widgets .card.collapsible').forEach(card => {
+          const wKey = card.getAttribute('data-wcard');
+          const isEn = !!(w[wKey] && w[wKey].enabled);
+          if (isEn) {
+            card.classList.add('expanded');
+            anyExpanded = true;
+          }
+        });
+        if (!anyExpanded) {
+          const first = document.querySelector('#tab-widgets .card.collapsible');
+          if (first) first.classList.add('expanded');
+        }
+      }
+
+      renderItems(cfg.items || []);
+    }
+
+    function renderItems(items) {
+      if (currentConfig) currentConfig.items = items;
+      const container = document.getElementById('items-list');
+      container.innerHTML = '';
+      items.forEach((it, idx) => {
+        const card = document.createElement('div');
+        card.className = 'item-card';
+
+        let iconHtml = `<img src="/api/icon_preview?idx=${idx}&t=${Date.now()}" alt="">`;
+        let title = it.name || 'Elemento';
+        let sub = it.target || '';
+
+        if (it.type === 'separator') {
+          iconHtml = SVG.sep;
+          title = 'Separador Visual';
+          sub = 'Línea de división';
+        } else if (it.type === 'group') {
+          sub = `${(it.items || []).length} elementos agrupados`;
+        } else if (it.type === 'action') {
+          sub = 'Acción del Sistema';
+        }
+
+        card.innerHTML = `
+          <div class="item-left">
+            <div class="item-icon-box">${iconHtml}</div>
+            <div style="min-width:0; flex:1;">
+              <div class="item-title">${escapeHtml(title)}</div>
+              <div class="item-sub">${escapeHtml(sub)}</div>
+            </div>
+          </div>
+          <div class="item-actions">
+            ${idx > 0 ? `<button class="btn-icon" title="Subir" onclick="moveItem(${idx}, ${idx - 1})">${SVG.up}</button>` : ''}
+            ${idx < items.length - 1 ? `<button class="btn-icon" title="Bajar" onclick="moveItem(${idx}, ${idx + 1})">${SVG.down}</button>` : ''}
+            ${it.type !== 'separator' ? `<button class="btn-icon" title="Cambiar Icono / Colecciones PNG" onclick="openIconModal(${idx})">${SVG.img}</button>` : ''}
+            ${it.type !== 'separator' ? `<button class="btn-icon" title="Restaurar icono original" onclick="resetItemIcon(${idx})">${SVG.undo}</button>` : ''}
+            <button class="btn-icon" style="color:var(--danger);" title="Eliminar" onclick="deleteItem(${idx})">${SVG.trash}</button>
+          </div>
+        `;
+        container.appendChild(card);
+
+        // If this item is a group/folder, list its nested items so their icons can also be changed individually
+        if (it.type === 'group') {
+          const children = it.items || it.children || [];
+          if (children.length) {
+            const subWrap = document.createElement('div');
+            subWrap.style.cssText = 'margin: -4px 0 8px 26px; padding-left: 12px; border-left: 2px solid rgba(96,165,250,0.28); display: flex; flex-direction: column; gap: 6px;';
+            children.forEach((ch, cIdx) => {
+              const chRow = document.createElement('div');
+              chRow.className = 'item-card';
+              chRow.style.cssText = 'padding: 8px 12px; background: rgba(255,255,255,0.02);';
+              chRow.innerHTML = `
+                <div class="item-left">
+                  <div class="item-icon-box" style="width:32px; height:32px;"><img src="/api/icon_preview?idx=${idx}&child_idx=${cIdx}&t=${Date.now()}" alt=""></div>
+                  <div style="min-width:0; flex:1;">
+                    <div class="item-title" style="font-size:13px;">${escapeHtml(ch.name || 'Elemento')}</div>
+                    <div class="item-sub" style="font-size:11px;">${escapeHtml(ch.target || '')}</div>
+                  </div>
+                </div>
+                <div class="item-actions">
+                  <button class="btn" style="padding:5px 10px; font-size:12px;" title="Cambiar icono de este elemento" onclick="openIconModal(${idx}, ${cIdx})">${SVG.img} Cambiar icono</button>
+                  <button class="btn-icon" title="Restaurar icono original" onclick="resetItemIcon(${idx}, ${cIdx})">${SVG.undo}</button>
+                </div>
+              `;
+              subWrap.appendChild(chRow);
+            });
+            container.appendChild(subWrap);
+          }
+        }
+      });
+    }
+
+    let currentSearchCat = 'all';
+    let searchSeq = 0;
+
+    function setSearchCategory(cat) {
+      currentSearchCat = cat;
+      document.querySelectorAll('#search-cat-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cat') === cat);
+      });
+      const inp = document.getElementById('app-search-input');
+      runAppSearch(inp ? inp.value : '');
+    }
+
+    function onSearchInput(q) {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => runAppSearch(q), 120);
+    }
+
+    async function runAppSearch(q, force = false) {
+      const box = document.getElementById('app-search-results');
+      const mySeq = ++searchSeq;
+      try {
+        const url = `/api/search_apps?limit=50&category=${encodeURIComponent(currentSearchCat)}&q=${encodeURIComponent(q || '')}${force ? '&force=1' : ''}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (mySeq !== searchSeq) return;
+        const apps = data.apps || [];
+        if (!apps.length) {
+          box.innerHTML = '<div style="font-size:12px; color:var(--text-muted); padding:8px 4px;">No se encontraron coincidencias. Prueba con otro nombre o usa "Examinar Archivo...".</div>';
+          return;
+        }
+        box.innerHTML = '';
+        apps.forEach(app => {
+          const row = document.createElement('div');
+          row.className = 'search-row';
+          const iconSrc = app.icon_src || app.target || '';
+          const thumb = `/api/icon_preview?path=${encodeURIComponent(iconSrc)}&name=${encodeURIComponent(app.name)}`;
+          const fullTarget = app.args ? `${app.target} ${app.args}` : app.target;
+          row.innerHTML = `
+            <div class="search-meta">
+              <img src="${thumb}" loading="lazy" alt="">
+              <div class="search-text">
+                <div class="search-name">${escapeHtml(app.name)}</div>
+                <div class="search-path">${escapeHtml(fullTarget)}</div>
+              </div>
+              <span class="source-tag">${escapeHtml(app.source || 'Sistema')}</span>
+            </div>
+            <button class="btn btn-primary" style="padding:6px 11px;">${SVG.plus} Añadir</button>
+          `;
+          row.querySelector('button').onclick = () => addSearchedApp(app);
+          box.appendChild(row);
+        });
+      } catch (e) {
+        box.innerHTML = '<div style="font-size:12px; color:var(--danger); padding:8px;">Error consultando índice de aplicaciones.</div>';
+      }
+    }
+
+    async function addSearchedApp(app) {
+      const res = await fetch('/api/add_searched_app', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(app)
+      });
+      const data = await res.json();
+      if (data.items) renderItems(data.items);
+    }
+
+    async function updateSetting(section, key, value) {
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[section]: {[key]: value}})
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    async function updateWidget(wId, settings) {
+      try {
+        await fetch('/api/set_widget', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({widget_id: wId, settings: settings})
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    function setPos(pos) {
+      document.querySelectorAll('#pos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-pos') === pos);
+      });
+      updateSetting('general', 'position', pos);
+    }
+
+    function setQaMode(mode) {
+      document.querySelectorAll('#qa-mode-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-mode') === mode);
+      });
+      updateWidget('quick_access', {mode: mode});
+    }
+
+    function updateBgColor(hex) {
+      document.getElementById('bg-swatch').style.backgroundColor = hex;
+      updateSetting('appearance', 'bg_color', hex);
+    }
+
+    function updateLabelColor(key, swatchId, hex) {
+      document.getElementById(swatchId).style.backgroundColor = hex;
+      updateSetting('appearance', key, hex);
+    }
+
+    function toggleAppearanceFlag(key, btnId) {
+      const btn = document.getElementById(btnId);
+      if (!btn) return;
+      const next = !btn.classList.contains('active');
+      btn.classList.toggle('active', next);
+      if (currentConfig && currentConfig.appearance) currentConfig.appearance[key] = next;
+      updateSetting('appearance', key, next);
+    }
+
+    async function onLaunchEffectChange(val) {
+      if (currentConfig && currentConfig.appearance) {
+        currentConfig.appearance.launch_effect = val;
+        currentConfig.appearance.bounce_on_launch = (val !== 'ninguno');
+      }
+      try {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({appearance: {launch_effect: val, bounce_on_launch: val !== 'ninguno'}})
+        });
+      } catch (e) { console.error(e); }
+    }
+
+    function setEffectColor(hex) {
+      const sw = document.getElementById('eff-color-swatch');
+      if (sw) sw.style.backgroundColor = hex;
+      const inp = document.getElementById('launch_effect_color_input');
+      if (inp) inp.value = hex;
+      updateSetting('appearance', 'launch_effect_color', hex);
+    }
+
+    async function previewLaunchEffect() {
+      try {
+        await fetch('/api/preview_launch_effect', {method: 'POST'});
+      } catch (e) { console.error(e); }
+    }
+
+    function setClockStyle(styleName) {
+      document.querySelectorAll('#w_clock_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cstyle') === styleName);
+      });
+      updateWidget('clock', {clock_style: styleName});
+    }
+
+    function setClockAlign(align) {
+      document.querySelectorAll('#w_clock_align_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-calign') === align);
+      });
+      updateWidget('clock', {alignment: align});
+    }
+
+    function updateClockColor(key, swatchId, hex) {
+      document.getElementById(swatchId).style.backgroundColor = hex;
+      updateWidget('clock', {[key]: hex});
+    }
+
+    async function addProgramDialog() {
+      try {
+        const res = await fetch('/api/pick_file', {method: 'POST'});
+        const data = await res.json();
+        if (data.path) {
+          const newItem = {
+            type: "app",
+            name: data.name,
+            target: data.target,
+            args: data.args || "",
+            icon_path: data.icon_path,
+            run_as_admin: false
+          };
+          const addRes = await fetch('/api/add_item', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item: newItem})
+          });
+          const updated = await addRes.json();
+          if (updated.items) renderItems(updated.items);
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function openActionsModal() {
+      const list = document.getElementById('actions-list');
+      list.innerHTML = SYSTEM_ACTIONS.map(a => `
+        <button class="btn" style="justify-content:flex-start; padding:11px 14px;" onclick="selectSystemAction('${a.id}', '${escapeHtml(a.name)}')">
+          ${SVG.bolt} <span>${escapeHtml(a.name)}</span>
+        </button>
+      `).join('');
+      document.getElementById('actions-modal').classList.add('open');
+    }
+
+    function closeActionsModal() {
+      document.getElementById('actions-modal').classList.remove('open');
+    }
+
+    async function selectSystemAction(actId, name) {
+      closeActionsModal();
+      const res = await fetch('/api/add_action', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action_type: actId, name: name})
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    async function addSeparator() {
+      const res = await fetch('/api/add_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item: {type: "separator"}})
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    async function deleteItem(idx) {
+      const res = await fetch('/api/delete_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({index: idx})
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    async function moveItem(fromIdx, toIdx) {
+      const res = await fetch('/api/move_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({from: fromIdx, to: toIdx})
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    const ICON_SYNONYMS = {
+      bloc: ['notepad', 'notes', 'textedit', 'notas', 'bloc de notas'],
+      notas: ['notes', 'notepad', 'textedit', 'onenote'],
+      excel: ['excel', 'grid', 'stocks', 'numbers', 'graficas'],
+      word: ['word', 'doc', 'pages', 'textedit'],
+      pdf: ['pdf', 'preview', 'books', 'doc'],
+      chrome: ['navegador', 'safari', 'edge', 'browser'],
+      edge: ['edge', 'navegador', 'safari', 'browser'],
+      explorador: ['explorer', 'apps', 'carpeta', 'dock', 'desktop', 'finder'],
+      carpeta: ['carpeta', 'folder', 'documents', 'desktop', 'downloads', 'projects', 'work', 'red'],
+      calculadora: ['calculator', 'calculadora'],
+      reloj: ['clock', 'temporizador', 'respaldo'],
+      correo: ['mail', 'outlook', 'correo', 'enviar'],
+      outlook: ['outlook', 'mail', 'correo'],
+      codigo: ['code', 'vscode', 'terminal', 'xcode', 'python', 'git', 'bash'],
+      studio: ['code', 'vscode', 'terminal', 'music', 'podcasts'],
+      terminal: ['terminal', 'cmd', 'powershell', 'consola', 'bash', 'wsl', 'ssh', 'script'],
+      system: ['system', 'sistema', 'ajustes', 'panel', 'monitor', 'cpu', 'unidad'],
+      sistema: ['system', 'ajustes', 'panel', 'monitor', 'servicios', 'actualizacion', 'unidad'],
+      powershell: ['powershell', 'terminal', 'cmd', 'script'],
+      bash: ['bash', 'terminal', 'wsl', 'linux', 'ssh'],
+      wsl: ['wsl', 'bash', 'ubuntu', 'linux', 'terminal'],
+      ssh: ['ssh', 'consola', 'terminal', 'llave', 'servidor'],
+      disco: ['disco', 'hdd', 'ssd', 'nvme', 'unidad', 'nas', 'usb', 'iso'],
+      unidad: ['unidad', 'disco', 'hdd', 'ssd', 'nvme', 'usb', 'sd', 'nas'],
+      hdd: ['disco', 'unidad', 'ssd', 'nvme'],
+      ssd: ['ssd', 'nvme', 'm2', 'disco', 'unidad', 'usb'],
+      nvme: ['nvme', 'm2', 'ssd', 'disco', 'unidad'],
+      m2: ['nvme', 'ssd', 'disco'],
+      usb: ['usb', 'memoria', 'ssd', 'disco'],
+      sd: ['sd', 'tarjeta', 'memoria'],
+      nas: ['nas', 'disco', 'servidor', 'red'],
+      iso: ['iso', 'imagen', 'disco'],
+      cpu: ['cpu', 'procesador', 'ram', 'gpu', 'monitor'],
+      ram: ['ram', 'memoria', 'cpu'],
+      gpu: ['gpu', 'grafica', 'cpu'],
+      bateria: ['bateria', 'energia', 'battery'],
+      wifi: ['wifi', 'red', 'router', 'ethernet', 'bluetooth'],
+      bluetooth: ['bluetooth', 'wifi', 'red'],
+      firewall: ['firewall', 'escudo', 'seguridad', 'vpn'],
+      backup: ['backup', 'respaldo', 'nube', 'sync'],
+      iniciar: ['terminal', 'cmd', 'powershell', 'play', 'automator', 'cohete', 'script'],
+      escritorio: ['desktop', 'show_desktop', 'home', 'casa', 'pc'],
+      papelera: ['delete', 'trash', 'recycle', 'papelera', 'limpiar'],
+      ajustes: ['settings', 'system', 'sistema', 'ajustes', 'panel', 'control'],
+      configuracion: ['settings', 'system', 'sistema', 'ajustes', 'panel', 'control'],
+      fotos: ['photos', 'pictures'],
+      musica: ['music', 'musica', 'audifonos', 'altavoces'],
+      mariposa: ['mariposa', 'butterfly', 'monarca'],
+      butterfly: ['mariposa', 'monarca'],
+      compartir: ['compartir', 'share', 'airdrop', 'enlace', 'nube', 'exportar'],
+      share: ['compartir', 'airdrop', 'enlace', 'nube', 'exportar'],
+      enlace: ['enlace', 'compartir', 'url', 'link'],
+      exportar: ['exportar', 'compartir', 'subir'],
+      importar: ['importar', 'descargar'],
+      favorito: ['favorito', 'favoritos', 'estrella', 'corazon', 'marcador', 'pin', 'corona'],
+      favoritos: ['favorito', 'estrella', 'corazon', 'marcador', 'pin', 'corona'],
+      estrella: ['estrella', 'favorito', 'destacado', 'corona'],
+      corazon: ['corazon', 'favorito', 'salud'],
+      bookmark: ['marcador', 'favorito', 'pin'],
+      marcador: ['marcador', 'bookmark', 'favorito', 'etiqueta'],
+      pin: ['pin', 'fijar', 'favorito', 'marcador'],
+      copiar: ['copiar', 'pegar', 'cortar'],
+      pegar: ['pegar', 'portapapeles', 'copiar'],
+      imprimir: ['imprimir', 'impresora', 'escaner'],
+      impresora: ['impresora', 'imprimir', 'escaner'],
+      vpn: ['vpn', 'tunel', 'ip', 'dns', 'firewall', 'escudo'],
+      router: ['router', 'wifi', 'red', 'ip', 'dns'],
+      servidor: ['servidor', 'nas', 'rdp', 'ssh'],
+      rdp: ['rdp', 'remoto', 'pc', 'servidor'],
+      monitor: ['monitor', 'pc', 'laptop', 'dual'],
+      laptop: ['laptop', 'pc', 'escritorio'],
+      enviar: ['enviar', 'send', 'correo', 'airdrop', 'compartir'],
+      send: ['enviar', 'correo', 'compartir'],
+      prohibido: ['prohibido', 'stop', 'forbidden', 'candado', 'apagar'],
+      stop: ['stop', 'prohibido', 'apagar'],
+      bloqueo: ['candado', 'prohibido', 'escudo', 'lock', 'bloquear'],
+      bloquear: ['candado', 'prohibido', 'escudo', 'bloquear'],
+      alerta: ['alerta', 'warning', 'campana', 'stop', 'prohibido'],
+      alertas: ['alerta', 'warning', 'campana'],
+      peligro: ['alerta', 'prohibido', 'stop', 'fuego'],
+      aviso: ['alerta', 'campana'],
+      warning: ['alerta', 'campana'],
+      seguridad: ['escudo', 'candado', 'llave', 'passwords', 'firewall', 'vpn'],
+      recortes: ['recortes', 'scissors', 'capture', 'capturar', 'cortar'],
+      buscar: ['buscar', 'spotlight', 'lupa'],
+      descargar: ['descargar', 'downloads', 'importar'],
+      subir: ['subir', 'upload', 'onedrive', 'cloud', 'nube', 'exportar'],
+      salud: ['salud', 'medicina', 'corazon'],
+      kill: ['prohibido', 'stop', 'alerta', 'apagar', 'rayo'],
+      whatsapp: ['whatsapp', 'messages', 'chat'],
+      telegram: ['telegram', 'messages', 'enviar'],
+      spotify: ['spotify', 'music', 'musica'],
+      discord: ['discord', 'chat', 'games'],
+      slack: ['slack', 'chat', 'trabajo'],
+      zoom: ['zoom', 'meet', 'camera'],
+      chatgpt: ['chatgpt', 'openai', 'ia'],
+      claude: ['claude', 'anthropic', 'ia'],
+      gemini: ['gemini', 'google', 'ia'],
+      certificados: ['certificados', 'pdf', 'documentos'],
+      expedientes: ['expedientes', 'carpeta', 'documentos'],
+      filtros: ['filtros', 'excel', 'datos', 'salud'],
+      formatos: ['formatos', 'documentos', 'salud'],
+      scripts: ['scripts', 'codigo', 'terminal', 'automatizacion'],
+      folder: ['carpeta', 'folder', 'documents', 'desktop', 'downloads', 'projects'],
+      powerapps: ['power bi', 'power automate', 'apps'],
+      automate: ['power automate', 'scripts', 'automator'],
+      pdf: ['pdf', 'adobe', 'certificados', 'preview'],
+      adobe: ['adobe', 'pdf'],
+      macos: ['macos', 'apple', 'finder', 'safari']
+    };
+
+    function getSuggestedIcons(item) {
+      if (!iconPacksCache || !item) return [];
+      const nameWords = (item.name || '').toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
+      const targetBase = ((item.target || '').split(/[\\/]/).pop() || '').replace(/\.(exe|lnk|bat|cmd|ps1|vbs|xlsx?|docx?|pdf|png|ico)$/i, '').toLowerCase();
+      const targetWords = targetBase.split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
+      const actionWords = (item.action_type || '').toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
+
+      const primaryTerms = new Set([...nameWords, ...actionWords]);
+      const secondaryTerms = new Set(targetWords);
+      const synonymTerms = new Set();
+
+      [...primaryTerms, ...secondaryTerms].forEach(w => {
+        if (ICON_SYNONYMS[w]) ICON_SYNONYMS[w].forEach(s => {
+          if (!primaryTerms.has(s)) synonymTerms.add(s);
+        });
+      });
+      if (item.type === 'group') {
+        ['folder', 'carpeta', 'apps', 'documents', 'projects'].forEach(s => synonymTerms.add(s));
+      }
+
+      const scored = [];
+      iconPacksCache.forEach(pack => {
+        pack.icons.forEach(ic => {
+          const n = ic.name.toLowerCase();
+          let score = 0;
+          primaryTerms.forEach(t => {
+            if (n === t) score += 30;
+            else if (t.length >= 3 && (n.includes(t) || t.includes(n))) score += 14;
+          });
+          secondaryTerms.forEach(t => {
+            if (primaryTerms.has(t)) return;
+            if (n === t) score += 12;
+            else if (t.length >= 3 && (n.includes(t) || t.includes(n))) score += 5;
+          });
+          synonymTerms.forEach(t => {
+            if (n === t) score += 8;
+            else if (t.length >= 3 && n.includes(t)) score += 3;
+          });
+          if (score > 0) {
+            if (pack.name === 'Apps Originales' && item.type !== 'group') score += 10;
+            else if (item.type === 'group' && (pack.name === 'Carpetas 3D Windows 11' || pack.name === 'Carpetas Temáticas' || pack.name === 'Carpetas de Colores')) score += 6;
+            else if (pack.name === 'Windows 11 Fluent') score += 5;
+            else if (pack.name === 'Apps 3D Fluent') score += 4;
+            else if (pack.name === 'macOS') score += 3;
+            scored.push({score, pack: pack.name, ic});
+          }
+        });
+      });
+      scored.sort((a, b) => b.score - a.score);
+      const seenHashes = new Set();
+      const deduped = [];
+      for (const entry of scored) {
+        const key = entry.ic.hash || entry.ic.url;
+        if (seenHashes.has(key)) continue;
+        seenHashes.add(key);
+        deduped.push(entry);
+        if (deduped.length >= 8) break;
+      }
+      if (deduped.length === 0 && iconPacksCache[0]) {
+        return iconPacksCache[0].icons.slice(0, 8).map(ic => ({pack: iconPacksCache[0].name, ic}));
+      }
+      return deduped;
+    }
+
+    async function openIconModal(idx, childIdx = null) {
+      editingItemIdx = idx;
+      editingChildIdx = (childIdx !== undefined && childIdx !== null) ? childIdx : null;
+      document.getElementById('pack-filter').value = '';
+      let item = (currentConfig && currentConfig.items && currentConfig.items[idx]) || {name: 'Elemento'};
+      if (editingChildIdx !== null) {
+        const children = item.items || item.children || [];
+        if (children[editingChildIdx]) item = children[editingChildIdx];
+      }
+      document.getElementById('icon-modal-title').innerText = `Elegir Icono — ${item.name || 'Elemento'}`;
+      document.getElementById('icon-pack-modal').classList.add('open');
+      if (!iconPacksCache) {
+        const res = await fetch('/api/icon_packs');
+        const data = await res.json();
+        iconPacksCache = data.packs || [];
+      }
+      const sugWrap = document.getElementById('icon-suggestions-wrap');
+      const sugRow = document.getElementById('icon-suggestions-row');
+      const suggestions = getSuggestedIcons(item);
+      if (suggestions.length) {
+        sugWrap.style.display = 'block';
+        document.getElementById('icon-suggestions-label').innerText = `Sugerencias para "${item.name || 'Elemento'}"`;
+        sugRow.innerHTML = '';
+        suggestions.forEach(s => {
+          const btn = document.createElement('div');
+          btn.className = 'pack-cell';
+          btn.innerHTML = `<img src="${s.ic.url}" alt=""><span>${escapeHtml(s.ic.name)}</span><span class="pack-sub">${escapeHtml(s.pack)}</span>`;
+          btn.onclick = () => applyPackIcon(s.ic.path);
+          sugRow.appendChild(btn);
+        });
+      } else {
+        sugWrap.style.display = 'none';
+      }
+      renderPackTabs();
+      renderPackGrid();
+    }
+
+    function closeIconModal() {
+      document.getElementById('icon-pack-modal').classList.remove('open');
+      editingItemIdx = null;
+      editingChildIdx = null;
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const actionsModal = document.getElementById('actions-modal');
+      if (actionsModal && actionsModal.classList.contains('open')) {
+        e.preventDefault();
+        closeActionsModal();
+        return;
+      }
+      const iconModal = document.getElementById('icon-pack-modal');
+      if (iconModal && iconModal.classList.contains('open')) {
+        e.preventDefault();
+        closeIconModal();
+        return;
+      }
+      e.preventDefault();
+      try { window.close(); } catch (_) {}
+    });
+
+    const FEATURED_PACKS = [
+      'Apps Originales',
+      'Windows 11 Fluent',
+      'Apps 3D Fluent',
+      'macOS',
+      'Carpetas 3D Windows 11',
+      'Carpetas Temáticas',
+      'Carpetas de Colores',
+      'Acciones Pro'
+    ];
+
+    function setPackGridSize(sz, btnEl) {
+      const grid = document.getElementById('pack-grid');
+      if (!grid) return;
+      grid.classList.remove('size-md', 'size-xl');
+      if (sz === 'md') grid.classList.add('size-md');
+      else if (sz === 'xl') grid.classList.add('size-xl');
+      document.querySelectorAll('.pack-size-btn').forEach(b => b.classList.remove('active'));
+      if (btnEl) btnEl.classList.add('active');
+    }
+
+    function selectPackFromDropdown(val) {
+      if (val === '' || val === null || val === undefined) return;
+      activePackIdx = parseInt(val, 10);
+      renderPackTabs();
+      renderPackGrid();
+    }
+
+    function renderPackTabs() {
+      const tabs = document.getElementById('pack-tabs');
+      if (!iconPacksCache || !iconPacksCache.length) {
+        tabs.innerHTML = '<span style="font-size:12px; color:var(--text-muted);">Sin colecciones instaladas</span>';
+        return;
+      }
+      const totalIcons = iconPacksCache.reduce((sum, p) => sum + p.icons.length, 0);
+      const featuredEntries = [];
+      const overflowEntries = [];
+      const featuredSet = new Set(FEATURED_PACKS);
+
+      FEATURED_PACKS.forEach(fname => {
+        const idx = iconPacksCache.findIndex(p => p.name === fname);
+        if (idx >= 0) featuredEntries.push({idx, pack: iconPacksCache[idx]});
+      });
+      iconPacksCache.forEach((p, idx) => {
+        if (!featuredSet.has(p.name)) overflowEntries.push({idx, pack: p});
+      });
+
+      const allBtn = `
+        <button class="pack-tab ${activePackIdx === -1 ? 'active' : ''}" onclick="activePackIdx=-1; renderPackTabs(); renderPackGrid();">
+          Todas (${totalIcons})
+        </button>`;
+      const featBtns = featuredEntries.map(({idx, pack}) => `
+        <button class="pack-tab ${idx === activePackIdx ? 'active' : ''}" onclick="activePackIdx=${idx}; renderPackTabs(); renderPackGrid();">
+          ${escapeHtml(pack.name)} (${pack.icons.length})
+        </button>
+      `).join('');
+
+      let dropHtml = '';
+      if (overflowEntries.length) {
+        const overflowActive = overflowEntries.some(e => e.idx === activePackIdx);
+        const opts = overflowEntries.map(({idx, pack}) =>
+          `<option value="${idx}" ${idx === activePackIdx ? 'selected' : ''}>${escapeHtml(pack.name)} (${pack.icons.length})</option>`
+        ).join('');
+        dropHtml = `
+          <select id="pack-overflow-select" class="pack-dropdown ${overflowActive ? 'active' : ''}" onchange="selectPackFromDropdown(this.value)" title="Más colecciones de iconos">
+            <option value="" ${!overflowActive ? 'selected' : ''}>Más colecciones (${overflowEntries.length})...</option>
+            ${opts}
+          </select>`;
+      }
+
+      tabs.innerHTML = allBtn + featBtns;
+      const overflowWrap = document.getElementById('pack-overflow-wrap');
+      if (overflowWrap) {
+        overflowWrap.innerHTML = dropHtml;
+        overflowWrap.style.display = overflowEntries.length ? 'inline-flex' : 'none';
+      }
+    }
+
+    function renderPackGrid() {
+      const grid = document.getElementById('pack-grid');
+      if (!iconPacksCache || !iconPacksCache.length) {
+        grid.innerHTML = '';
+        return;
+      }
+      const q = (document.getElementById('pack-filter').value || '').trim().toLowerCase();
+      const qSyns = (q && ICON_SYNONYMS[q]) ? ICON_SYNONYMS[q] : [];
+      let list = [];
+      if (activePackIdx === -1 || q.length > 0) {
+        // When viewing "Todas" or typing a search filter, search across all collections (and Spanish/English synonyms)
+        const packOrder = new Map([
+          ['Apps Originales', 0],
+          ['Windows 11 Fluent', 1],
+          ['Apps 3D Fluent', 2],
+          ['macOS', 3]
+        ]);
+        const orderedPacks = [...iconPacksCache].sort((a, b) => {
+          const pa = packOrder.has(a.name) ? packOrder.get(a.name) : 99;
+          const pb = packOrder.has(b.name) ? packOrder.get(b.name) : 99;
+          return pa - pb || a.name.localeCompare(b.name);
+        });
+        const seenHashes = new Set();
+        orderedPacks.forEach(p => {
+          p.icons.forEach(ic => {
+            const icLow = ic.name.toLowerCase();
+            const pkLow = p.name.toLowerCase();
+            const matched = !q || icLow.includes(q) || pkLow.includes(q) || qSyns.some(s => icLow.includes(s));
+            if (matched) {
+              const key = ic.hash || ic.url;
+              if (seenHashes.has(key)) return;
+              seenHashes.add(key);
+              list.push({ic, pack: p.name});
+            }
+          });
+        });
+      } else if (iconPacksCache[activePackIdx]) {
+        const p = iconPacksCache[activePackIdx];
+        p.icons.forEach(ic => list.push({ic, pack: null}));
+      }
+      grid.innerHTML = '';
+      if (!list.length) {
+        grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:24px; color:var(--text-muted); font-size:12.5px;">Sin coincidencias en las colecciones. Puedes buscar un archivo PNG/ICO abajo.</div>';
+        return;
+      }
+      list.forEach(({ic, pack}) => {
+        const cell = document.createElement('div');
+        cell.className = 'pack-cell';
+        cell.innerHTML = `<img src="${ic.url}" loading="lazy" alt=""><span>${escapeHtml(ic.name)}</span>${pack ? `<span class="pack-sub">${escapeHtml(pack)}</span>` : ''}`;
+        cell.onclick = () => applyPackIcon(ic.path);
+        grid.appendChild(cell);
+      });
+    }
+
+    async function applyPackIcon(iconPath) {
+      if (editingItemIdx === null) return;
+      const idx = editingItemIdx;
+      const cIdx = editingChildIdx;
+      closeIconModal();
+      const bodyObj = {index: idx, icon_path: iconPath};
+      if (cIdx !== null) bodyObj.child_index = cIdx;
+      const res = await fetch('/api/set_item_icon', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(bodyObj)
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    async function pickCustomIconFile() {
+      const idx = editingItemIdx;
+      if (idx === null) return;
+      const res = await fetch('/api/pick_icon', {method: 'POST'});
+      const data = await res.json();
+      if (data.icon_path) {
+        await applyPackIcon(data.icon_path);
+      }
+    }
+
+    async function resetItemIcon(idx, childIdx = null) {
+      if (idx === null || idx === undefined) return;
+      const bodyObj = {index: idx};
+      if (childIdx !== null && childIdx !== undefined) bodyObj.child_index = childIdx;
+      const res = await fetch('/api/reset_item_icon', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(bodyObj)
+      });
+      const updated = await res.json();
+      if (updated.items) renderItems(updated.items);
+    }
+
+    async function resetCurrentModalIcon() {
+      if (editingItemIdx === null) return;
+      const idx = editingItemIdx;
+      const cIdx = editingChildIdx;
+      closeIconModal();
+      await resetItemIcon(idx, cIdx);
+    }
+
+    function switchTab(tabId, btnEl) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      btnEl.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
+      document.querySelector('.scroll-area').scrollTop = 0;
+    }
+
+    function updateLabel(id, text) {
+      const el = document.getElementById(id);
+      if (el) el.innerText = text;
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    let _boundsRestoredOnce = false;
+    let _boundsSaveTimer = null;
+    let _lastSavedBoundsStr = '';
+
+    function applySavedPanelBounds(bounds) {
+      if (_boundsRestoredOnce || !bounds) return;
+      _boundsRestoredOnce = true;
+      try {
+        const bw = parseInt(bounds.width, 10);
+        const bh = parseInt(bounds.height, 10);
+        if (bw >= 520 && bh >= 420) {
+          if (Math.abs(window.outerWidth - bw) > 12 || Math.abs(window.outerHeight - bh) > 12) {
+            window.resizeTo(bw, bh);
+          }
+        }
+        if (bounds.x !== null && bounds.x !== undefined && bounds.y !== null && bounds.y !== undefined) {
+          const bx = parseInt(bounds.x, 10);
+          const by = parseInt(bounds.y, 10);
+          if (!isNaN(bx) && !isNaN(by) && bx > -2000 && by > -1000) {
+            if (Math.abs(window.screenX - bx) > 12 || Math.abs(window.screenY - by) > 12) {
+              window.moveTo(bx, by);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    function collectBoundsPayload() {
+      return {
+        width: window.outerWidth,
+        height: window.outerHeight,
+        x: window.screenX,
+        y: window.screenY
+      };
+    }
+
+    function savePanelBoundsNow(useBeacon = false) {
+      if (!_boundsRestoredOnce) return;
+      const b = collectBoundsPayload();
+      if (!b.width || b.width < 400 || !b.height || b.height < 300) return;
+      const key = `${b.width}x${b.height}@${b.x},${b.y}`;
+      if (!useBeacon && key === _lastSavedBoundsStr) return;
+      _lastSavedBoundsStr = key;
+      const payload = JSON.stringify(b);
+      if (useBeacon && navigator.sendBeacon) {
+        try {
+          navigator.sendBeacon('/api/save_panel_bounds', new Blob([payload], {type: 'application/json'}));
+          return;
+        } catch (e) {}
+      }
+      fetch('/api/save_panel_bounds', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: payload
+      }).catch(() => {});
+    }
+
+    function scheduleSaveBounds() {
+      if (_boundsSaveTimer) clearTimeout(_boundsSaveTimer);
+      _boundsSaveTimer = setTimeout(() => savePanelBoundsNow(false), 450);
+    }
+
+    window.addEventListener('resize', scheduleSaveBounds);
+    window.addEventListener('beforeunload', () => savePanelBoundsNow(true));
+    setInterval(() => savePanelBoundsNow(false), 1800);
+
+    // Live lifecycle channel: auto-close immediately when dockbar is clicked, closed, or opens another HTML panel
+    (function setupPanelLifecycle() {
+      const params = new URLSearchParams(window.location.search);
+      const panelToken = params.get('panel_token') || '';
+      let isClosing = false;
+      let es = null;
+      let netFailCount = 0;
+      let legacyServerDetected = false;
+
+      function closePanelNow() {
+        if (isClosing) return;
+        isClosing = true;
+        try { savePanelBoundsNow(true); } catch (e) {}
+        try { if (es) es.close(); } catch (e) {}
+        try { window.close(); } catch (e) {}
+      }
+
+      function verifyServerAlive() {
+        if (isClosing || legacyServerDetected) return;
+        fetch('/api/ping', {cache: 'no-store'})
+          .then(r => {
+            if (r.status === 404) {
+              // Older backend running before restart: keep panel open cleanly and stop SSE retries
+              legacyServerDetected = true;
+              try { if (es) es.close(); } catch (e) {}
+              return null;
+            }
+            if (!r.ok) return null;
+            netFailCount = 0;
+            return r.json();
+          })
+          .then(data => {
+            if (!data) return;
+            if (data.ok === false) {
+              closePanelNow();
+            } else if (panelToken && data.active_token !== panelToken) {
+              closePanelNow();
+            }
+          })
+          .catch(() => {
+            // Confirm server is genuinely stopped (2 consecutive network failures) before closing
+            netFailCount += 1;
+            if (netFailCount >= 2) {
+              closePanelNow();
+            } else {
+              setTimeout(verifyServerAlive, 400);
+            }
+          });
+      }
+
+      // First probe /api/ping once so we only attach EventSource when the backend supports it
+      fetch('/api/ping', {cache: 'no-store'})
+        .then(r => {
+          if (r.status === 404) {
+            legacyServerDetected = true;
+            return null;
+          }
+          if (!r.ok) return null;
+          return r.json();
+        })
+        .then(data => {
+          if (legacyServerDetected || !data) return;
+          if (data.ok === false || (panelToken && data.active_token !== panelToken)) {
+            closePanelNow();
+            return;
+          }
+          try {
+            es = new EventSource('/api/panel_events?token=' + encodeURIComponent(panelToken));
+            es.addEventListener('close', () => closePanelNow());
+            es.onerror = () => {
+              if (isClosing || legacyServerDetected) return;
+              setTimeout(verifyServerAlive, 350);
+            };
+          } catch (e) {
+            setInterval(verifyServerAlive, 1200);
+          }
+        })
+        .catch(() => {});
+    })();
+
+    window.addEventListener('DOMContentLoaded', loadConfig);
+  </script>
+</body>
+</html>
