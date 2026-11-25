@@ -231,6 +231,10 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/config":
             if _config_mgr_ref:
+                try:
+                    _config_mgr_ref.data = _config_mgr_ref.load()
+                except Exception:
+                    pass
                 self._send_json(_config_mgr_ref.data)
             else:
                 self._send_json({"error": "No config manager"}, 500)
@@ -533,6 +537,10 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             w_id = payload.get("widget_id")
             settings = payload.get("settings", {})
             if _config_mgr_ref and w_id:
+                try:
+                    _config_mgr_ref.data = _config_mgr_ref.load()
+                except Exception:
+                    pass
                 for k, v in settings.items():
                     _config_mgr_ref.set_widget(w_id, k, v)
                 if _on_applied_ref:
@@ -540,6 +548,55 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"status": "ok"})
             else:
                 self._send_json({"error": "Invalid widget params"}, 400)
+            return
+
+        elif path == "/api/snap_widget":
+            w_id = payload.get("widget_id")
+            preset = payload.get("preset", "")
+            def_w = int(payload.get("def_w", 270) or 270)
+            def_h = int(payload.get("def_h", 120) or 120)
+            if _config_mgr_ref and w_id and preset:
+                try:
+                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    user32_s = ctypes.windll.user32
+                    sw = int(user32_s.GetSystemMetrics(0) or 1920)
+                    sh = int(user32_s.GetSystemMetrics(1) or 1080)
+                    try:
+                        dpi_s = max(1.0, user32_s.GetDpiForSystem() / 96.0)
+                    except Exception:
+                        dpi_s = 1.0
+                    wcfg = _config_mgr_ref.data.get("widgets", {}).get(w_id, {})
+                    scale = float(wcfg.get("size_scale", 1.0) or 1.0) * dpi_s
+                    cw = wcfg.get("custom_w")
+                    ch = wcfg.get("custom_h")
+                    w = int(cw) if cw else int(def_w * scale)
+                    h = int(ch) if ch else int(def_h * scale)
+                    if bool(wcfg.get("minimized", False)) or bool(wcfg.get("auto_collapse", False)):
+                        h = max(34, int(38 * dpi_s))
+                    mx, mt, mb = 22, 42, 74
+                    if preset == "top_left":
+                        nx, ny = mx, mt
+                    elif preset == "top_center":
+                        nx, ny = max(0, (sw - w) // 2), mt
+                    elif preset == "top_right":
+                        nx, ny = max(0, sw - w - mx), mt
+                    elif preset == "bottom_left":
+                        nx, ny = mx, max(mt, sh - h - mb)
+                    elif preset == "bottom_right":
+                        nx, ny = max(0, sw - w - mx), max(mt, sh - h - mb)
+                    else:
+                        self._send_json({"error": "Invalid preset"}, 400)
+                        return
+                    _config_mgr_ref.set_widget(w_id, "x", int(nx))
+                    _config_mgr_ref.set_widget(w_id, "y", int(ny))
+                    _config_mgr_ref.set_widget(w_id, "anchor_preset", preset)
+                    if _on_applied_ref:
+                        _on_applied_ref()
+                    self._send_json({"status": "ok", "x": int(nx), "y": int(ny), "anchor_preset": preset})
+                except Exception as ex:
+                    self._send_json({"error": str(ex)}, 500)
+            else:
+                self._send_json({"error": "Invalid snap params"}, 400)
             return
 
         elif path == "/api/save_panel_bounds":

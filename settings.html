@@ -1526,6 +1526,7 @@
               <span class="setting-desc">Azul eléctrico por defecto o cualquier tono personalizado</span>
             </div>
             <div class="color-btn-wrapper">
+              <div class="preset-dot" style="background:#0078d4;" title="Azul Outlook (Recomendado)" onclick="setEffectColor('#0078d4')"></div>
               <div class="preset-dot" style="background:#38bdf8;" title="Azul Energía" onclick="setEffectColor('#38bdf8')"></div>
               <div class="preset-dot" style="background:#06b6d4;" title="Agua Cian" onclick="setEffectColor('#06b6d4')"></div>
               <div class="preset-dot" style="background:#10b981;" title="Esmeralda" onclick="setEffectColor('#10b981')"></div>
@@ -1837,14 +1838,97 @@
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Estilo Visual de la Cápsula</span>
-                <span class="setting-desc">Elige el acabado de cristal o neón de la cápsula flotante</span>
+                <span class="setting-desc">Elige el acabado visual flotante encima de la Dockbar</span>
               </div>
-              <div class="radio-group" id="capsule-style-group">
+              <div class="radio-group" id="capsule-style-group" style="flex-wrap:wrap;">
                 <div class="radio-option" data-cstyle="cristal" onclick="setCapsuleStyle('cristal')">Cristal</div>
                 <div class="radio-option" data-cstyle="neon" onclick="setCapsuleStyle('neon')">Neón</div>
                 <div class="radio-option" data-cstyle="minimal" onclick="setCapsuleStyle('minimal')">Minimal</div>
                 <div class="radio-option" data-cstyle="oled" onclick="setCapsuleStyle('oled')">OLED</div>
                 <div class="radio-option" data-cstyle="acrilico" onclick="setCapsuleStyle('acrilico')">Acrílico</div>
+                <div class="radio-option" data-cstyle="editorial" onclick="setCapsuleStyle('editorial')">Editorial</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Posición de Botones de Control</span>
+                <span class="setting-desc">Cambia dónde aparecen Anterior / Play-Pausa / Siguiente</span>
+              </div>
+              <div class="radio-group" id="capsule-btnpos-group" style="flex-wrap:wrap;">
+                <div class="radio-option" data-bpos="right" onclick="setCapsuleBtnPos('right')">Derecha</div>
+                <div class="radio-option" data-bpos="left" onclick="setCapsuleBtnPos('left')">Izquierda</div>
+                <div class="radio-option" data-bpos="center" onclick="setCapsuleBtnPos('center')">Centro Abajo</div>
+                <div class="radio-option" data-bpos="split" onclick="setCapsuleBtnPos('split')">Divididos</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño (Escala) y Ancho de Cápsula</span>
+                <span class="setting-desc">Ajusta la escala general y el ancho base horizontal</span>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <div class="slider-container" style="width:140px;">
+                  <input type="range" id="media_capsule_scale" min="0.75" max="1.45" step="0.05" value="1.0" oninput="updateSetting('general', 'media_capsule_scale', parseFloat(this.value)); updateLabel('lbl-mc-scale', Math.round(this.value*100)+'%')">
+                  <span class="slider-val" id="lbl-mc-scale">100%</span>
+                </div>
+                <div class="slider-container" style="width:145px;">
+                  <input type="range" id="media_capsule_width" min="260" max="560" step="10" value="360" oninput="updateSetting('general', 'media_capsule_width', parseInt(this.value)); updateLabel('lbl-mc-w', this.value + ' px')">
+                  <span class="slider-val" id="lbl-mc-w">360 px</span>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Transparencia y Separación sobre Dockbar</span>
+                <span class="setting-desc">Opacidad del fondo y distancia vertical respecto a la barra</span>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <div class="slider-container" style="width:140px;">
+                  <input type="range" id="media_capsule_opacity" min="0.15" max="1.0" step="0.05" value="0.90" oninput="updateSetting('general', 'media_capsule_opacity', parseFloat(this.value)); updateLabel('lbl-mc-op', Math.round(this.value*100)+'%')">
+                  <span class="slider-val" id="lbl-mc-op">90%</span>
+                </div>
+                <div class="slider-container" style="width:130px;">
+                  <input type="range" id="media_capsule_offset_y" min="4" max="48" step="2" value="10" oninput="updateSetting('general', 'media_capsule_offset_y', parseInt(this.value)); updateLabel('lbl-mc-off', this.value + ' px')">
+                  <span class="slider-val" id="lbl-mc-off">10 px</span>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Colores de Fondo y Acento / Botón</span>
+                <span class="setting-desc">Personaliza el fondo y color del botón Play o vuelve a Auto</span>
+              </div>
+              <div class="color-btn-wrapper">
+                <input type="color" id="mc_bg_input" style="opacity:0; width:0; height:0;" onchange="setCapsuleColor('media_capsule_bg_color', 'mc-bg-swatch', this.value)">
+                <div class="color-swatch" id="mc-bg-swatch" title="Color de fondo" onclick="document.getElementById('mc_bg_input').click()"></div>
+                <input type="color" id="mc_acc_input" style="opacity:0; width:0; height:0;" onchange="setCapsuleColor('media_capsule_accent_color', 'mc-acc-swatch', this.value)">
+                <div class="color-swatch" id="mc-acc-swatch" title="Color de acento" onclick="document.getElementById('mc_acc_input').click()"></div>
+                <button type="button" class="btn" style="padding:5px 9px;" onclick="resetCapsuleColors()">Auto</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Fuente, Tamaño y Colores de Texto</span>
+                <span class="setting-desc">Tipografía, tamaño y colores del título y del artista</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <select class="select-input" id="media_capsule_font_family" onchange="updateSetting('general', 'media_capsule_font_family', this.value)">
+                  <option value="Segoe UI">Segoe UI</option>
+                  <option value="Calibri">Calibri</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Consolas">Consolas</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Trebuchet MS">Trebuchet MS</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+                <div class="slider-container" style="width:125px;">
+                  <input type="range" id="media_capsule_font_size" min="9" max="18" value="11" oninput="updateSetting('general', 'media_capsule_font_size', parseInt(this.value)); updateLabel('lbl-mc-fsz', this.value + ' px')">
+                  <span class="slider-val" id="lbl-mc-fsz">11 px</span>
+                </div>
+                <input type="color" id="mc_tcol_input" style="opacity:0; width:0; height:0;" onchange="setCapsuleColor('media_capsule_title_color', 'mc-tcol-swatch', this.value)">
+                <div class="color-swatch" id="mc-tcol-swatch" title="Color del título" onclick="document.getElementById('mc_tcol_input').click()"></div>
+                <input type="color" id="mc_acol_input" style="opacity:0; width:0; height:0;" onchange="setCapsuleColor('media_capsule_artist_color', 'mc-acol-swatch', this.value)">
+                <div class="color-swatch" id="mc-acol-swatch" title="Color del artista" onclick="document.getElementById('mc_acol_input').click()"></div>
               </div>
             </div>
           </div>
@@ -1882,12 +1966,19 @@
               </div>
             </div>
             <div class="setting-row">
-              <div class="setting-info"><span class="setting-label">Estilo en el Escritorio</span></div>
-              <div class="radio-group" id="w_bat_style_group">
+              <div class="setting-info">
+                <span class="setting-label">Diseño en el Escritorio (8 Estilos con Fondo Difuminado)</span>
+                <span class="setting-desc">El espacio gastado usa fondo esmerilado con blur en lugar de hueco transparente</span>
+              </div>
+              <div class="radio-group" id="w_bat_style_group" style="flex-wrap:wrap; max-width:440px;">
                 <div class="radio-option" data-bstyle="anillo" onclick="setBatteryWidgetStyle('anillo')">Anillo</div>
+                <div class="radio-option" data-bstyle="arco" onclick="setBatteryWidgetStyle('arco')">Velocímetro</div>
                 <div class="radio-option" data-bstyle="barra" onclick="setBatteryWidgetStyle('barra')">Barra</div>
+                <div class="radio-option" data-bstyle="segmentado" onclick="setBatteryWidgetStyle('segmentado')">Celdas</div>
+                <div class="radio-option" data-bstyle="vertical" onclick="setBatteryWidgetStyle('vertical')">Vertical</div>
                 <div class="radio-option" data-bstyle="neon" onclick="setBatteryWidgetStyle('neon')">Neón</div>
                 <div class="radio-option" data-bstyle="pildora" onclick="setBatteryWidgetStyle('pildora')">Píldora</div>
+                <div class="radio-option" data-bstyle="tarjeta" onclick="setBatteryWidgetStyle('tarjeta')">Tarjeta</div>
               </div>
             </div>
             <div class="setting-row">
@@ -2712,18 +2803,14 @@
       updateWidget(wId, {bg_color: '', bg_image: ''});
     }
 
-    function snapWidgetPreset(wId, preset, defW, defH) {
-      const sw = window.screen.width || 1920;
-      const sh = window.screen.height || 1080;
-      const cfg = (currentConfig && currentConfig.widgets && currentConfig.widgets[wId]) || {};
-      const w = cfg.custom_w || defW;
-      const h = cfg.custom_h || defH;
-      let nx = 22, ny = 42;
-      if (preset === 'top_center') { nx = Math.round((sw - w) / 2); ny = 42; }
-      else if (preset === 'top_right') { nx = sw - w - 22; ny = 42; }
-      else if (preset === 'bottom_left') { nx = 22; ny = sh - h - 68; }
-      else if (preset === 'bottom_right') { nx = sw - w - 22; ny = sh - h - 68; }
-      updateWidget(wId, {x: nx, y: ny, anchor_preset: preset});
+    async function snapWidgetPreset(wId, preset, defW, defH) {
+      try {
+        await fetch('/api/snap_widget', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({widget_id: wId, preset: preset, def_w: defW, def_h: defH})
+        });
+      } catch (e) { console.error(e); }
     }
 
     async function ingestTodoInboxNow() {
@@ -2771,6 +2858,28 @@
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === st);
       });
       updateSetting('general', 'media_capsule_style', st);
+    }
+
+    function setCapsuleBtnPos(bpos) {
+      document.querySelectorAll('#capsule-btnpos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bpos') === bpos);
+      });
+      updateSetting('general', 'media_capsule_btn_pos', bpos);
+    }
+
+    function setCapsuleColor(key, swatchId, hex) {
+      const sw = document.getElementById(swatchId);
+      if (sw) sw.style.backgroundColor = hex || '#121620';
+      updateSetting('general', key, hex);
+    }
+
+    function resetCapsuleColors() {
+      const bgSw = document.getElementById('mc-bg-swatch');
+      const acSw = document.getElementById('mc-acc-swatch');
+      if (bgSw) bgSw.style.backgroundColor = '#121620';
+      if (acSw) acSw.style.backgroundColor = '#0078d4';
+      updateSetting('general', 'media_capsule_bg_color', '');
+      updateSetting('general', 'media_capsule_accent_color', '');
     }
 
     function setBatteryWidgetStyle(st) {
@@ -2910,6 +3019,52 @@
       document.querySelectorAll('#capsule-style-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === mcSt);
       });
+      const mcBp = gen.media_capsule_btn_pos || 'right';
+      document.querySelectorAll('#capsule-btnpos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bpos') === mcBp);
+      });
+      const mcSc = gen.media_capsule_scale ?? 1.0;
+      const mcScEl = document.getElementById('media_capsule_scale');
+      if (mcScEl) mcScEl.value = mcSc;
+      updateLabel('lbl-mc-scale', Math.round(mcSc * 100) + '%');
+      const mcW = gen.media_capsule_width ?? 360;
+      const mcWEl = document.getElementById('media_capsule_width');
+      if (mcWEl) mcWEl.value = mcW;
+      updateLabel('lbl-mc-w', mcW + ' px');
+      const mcOp = gen.media_capsule_opacity ?? 0.90;
+      const mcOpEl = document.getElementById('media_capsule_opacity');
+      if (mcOpEl) mcOpEl.value = mcOp;
+      updateLabel('lbl-mc-op', Math.round(mcOp * 100) + '%');
+      const mcOff = gen.media_capsule_offset_y ?? 10;
+      const mcOffEl = document.getElementById('media_capsule_offset_y');
+      if (mcOffEl) mcOffEl.value = mcOff;
+      updateLabel('lbl-mc-off', mcOff + ' px');
+      const mcBg = gen.media_capsule_bg_color || '#121620';
+      const mcBgSw = document.getElementById('mc-bg-swatch');
+      if (mcBgSw) mcBgSw.style.backgroundColor = mcBg;
+      const mcBgInp = document.getElementById('mc_bg_input');
+      if (mcBgInp) mcBgInp.value = mcBg;
+      const mcAcc = gen.media_capsule_accent_color || '#0078d4';
+      const mcAccSw = document.getElementById('mc-acc-swatch');
+      if (mcAccSw) mcAccSw.style.backgroundColor = mcAcc;
+      const mcAccInp = document.getElementById('mc_acc_input');
+      if (mcAccInp) mcAccInp.value = mcAcc;
+      const mcFf = document.getElementById('media_capsule_font_family');
+      if (mcFf) mcFf.value = gen.media_capsule_font_family || 'Segoe UI';
+      const mcFsz = gen.media_capsule_font_size ?? 11;
+      const mcFszEl = document.getElementById('media_capsule_font_size');
+      if (mcFszEl) mcFszEl.value = mcFsz;
+      updateLabel('lbl-mc-fsz', mcFsz + ' px');
+      const mcTcol = gen.media_capsule_title_color || '#f8fafc';
+      const mcTsw = document.getElementById('mc-tcol-swatch');
+      if (mcTsw) mcTsw.style.backgroundColor = mcTcol;
+      const mcTinp = document.getElementById('mc_tcol_input');
+      if (mcTinp) mcTinp.value = mcTcol;
+      const mcAcol = gen.media_capsule_artist_color || '#94a3b8';
+      const mcAsw = document.getElementById('mc-acol-swatch');
+      if (mcAsw) mcAsw.style.backgroundColor = mcAcol;
+      const mcAinp = document.getElementById('mc_acol_input');
+      if (mcAinp) mcAinp.value = mcAcol;
 
       const app = cfg.appearance || {};
       document.getElementById('edge_offset').value = app.edge_offset ?? 0;

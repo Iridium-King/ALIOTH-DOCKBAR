@@ -10,7 +10,7 @@ import uuid
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog
-from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageFilter
 
 from window_utils import (
     set_tool_window, update_layered_pil, release_layered_surface,
@@ -310,35 +310,64 @@ class BaseDesktopWidget:
             return w, self._collapsed_h()
         return w, full_h
 
+    def _compute_anchored_pos(self, w, h):
+        """Computes exact physical screen (x, y), honoring anchor_preset across collapse/expand/restart."""
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        preset = (self.get_cfg("anchor_preset", "") or "").strip()
+        mx, mt, mb = 22, 42, 74
+        if preset == "top_left":
+            return mx, mt
+        if preset == "top_center":
+            return max(0, (sw - w) // 2), mt
+        if preset == "top_right":
+            return max(0, sw - w - mx), mt
+        if preset == "bottom_left":
+            return mx, max(mt, sh - h - mb)
+        if preset == "bottom_right":
+            return max(0, sw - w - mx), max(mt, sh - h - mb)
+        x = self.get_cfg("x", self.default_x)
+        y = self.get_cfg("y", self.default_y)
+        x = max(0, min(sw - w, int(x)))
+        y = max(32, min(sh - h, int(y)))
+        return x, y
+
     def _set_window_size_live(self, new_w, new_h):
         new_w = max(self._min_w(), int(new_w))
         new_h = max(self._min_h(), int(new_h))
-        if new_w != self.win_w or new_h != self.win_h:
-            self.win_w = new_w
-            self.win_h = new_h
-            if self.window and self.window.winfo_exists():
-                x = self.window.winfo_x()
-                y = self.window.winfo_y()
-                sw = self.root.winfo_screenwidth()
-                sh = self.root.winfo_screenheight()
-                x = max(0, min(sw - new_w, int(x)))
-                y = max(0, min(sh - new_h, int(y)))
+        if self.window and self.window.winfo_exists():
+            if self.is_resizing:
+                x, y = self.window.winfo_x(), self.window.winfo_y()
+            else:
+                x, y = self._compute_anchored_pos(new_w, new_h)
+            cur_x, cur_y = self.window.winfo_x(), self.window.winfo_y()
+            if new_w != self.win_w or new_h != self.win_h or x != cur_x or y != cur_y:
+                self.win_w = new_w
+                self.win_h = new_h
                 self.window.geometry(f"{new_w}x{new_h}+{x}+{y}")
+                if self.top_hwnd:
+                    user32.SetWindowPos(
+                        self.top_hwnd, 0, int(x), int(y), int(new_w), int(new_h),
+                        SWP_NOZORDER | SWP_NOACTIVATE
+                    )
                 if self.canvas:
                     self.canvas.config(width=new_w, height=new_h)
+        else:
+            self.win_w = new_w
+            self.win_h = new_h
 
     def _refresh_dimensions(self):
         w, h = self._compute_dims()
         self._card_bg_cache = None
         if self.window and self.window.winfo_exists():
-            x = self.get_cfg("x", self.window.winfo_x())
-            y = self.get_cfg("y", self.window.winfo_y())
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            x = max(0, min(sw - w, int(x)))
-            y = max(0, min(sh - h, int(y)))
+            x, y = self._compute_anchored_pos(w, h)
             self.win_w, self.win_h = w, h
             self.window.geometry(f"{w}x{h}+{x}+{y}")
+            if self.top_hwnd:
+                user32.SetWindowPos(
+                    self.top_hwnd, 0, int(x), int(y), int(w), int(h),
+                    SWP_NOZORDER | SWP_NOACTIVATE
+                )
             if self.canvas:
                 self.canvas.config(width=w, height=h)
         else:
@@ -477,29 +506,17 @@ class BaseDesktopWidget:
         self.set_cfg("lock_position", nxt)
 
     def _apply_anchor_preset(self, preset):
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        margin_x = 22
-        margin_top = 42
-        margin_bot = 68
-        w, h = self.win_w, self.win_h
-        if preset == "top_left":
-            nx, ny = margin_x, margin_top
-        elif preset == "top_center":
-            nx, ny = (sw - w) // 2, margin_top
-        elif preset == "top_right":
-            nx, ny = sw - w - margin_x, margin_top
-        elif preset == "bottom_left":
-            nx, ny = margin_x, sh - h - margin_bot
-        elif preset == "bottom_right":
-            nx, ny = sw - w - margin_x, sh - h - margin_bot
-        else:
+        if preset not in ("top_left", "top_center", "top_right", "bottom_left", "bottom_right"):
             return
+        self.set_cfg("anchor_preset", preset)
+        w, h = self.win_w, self.win_h
+        nx, ny = self._compute_anchored_pos(w, h)
         self.set_cfg("x", int(nx))
         self.set_cfg("y", int(ny))
-        self.set_cfg("anchor_preset", preset)
         if self.window and self.window.winfo_exists():
             self.window.geometry(f"{w}x{h}+{int(nx)}+{int(ny)}")
+            if self.top_hwnd:
+                user32.SetWindowPos(self.top_hwnd, 0, int(nx), int(ny), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
             self._redraw_now()
 
     def _on_base_enter(self, _event=None):
@@ -557,14 +574,7 @@ class BaseDesktopWidget:
         # Guarantee zero taskbar / Alt+Tab presence + WS_EX_LAYERED true alpha + Z-order independence from Dockbar
         self.top_hwnd = set_tool_window(self.window, owner_hwnd=None, layered=True)
 
-        x = self.get_cfg("x", self.default_x)
-        y = self.get_cfg("y", self.default_y)
-
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        x = max(0, min(sw - self.win_w, int(x)))
-        y = max(32, min(sh - self.win_h, int(y)))
-
+        x, y = self._compute_anchored_pos(self.win_w, self.win_h)
         self.window.geometry(f"{self.win_w}x{self.win_h}+{x}+{y}")
 
         self.canvas = tk.Canvas(
@@ -862,10 +872,14 @@ class BaseDesktopWidget:
             return
         self.is_dragging = False
         if self.window and self.window.winfo_exists():
-            x = self.window.winfo_x()
-            y = self.window.winfo_y()
-            self.set_cfg("x", x)
-            self.set_cfg("y", y)
+            x = int(self.window.winfo_x())
+            y = int(self.window.winfo_y())
+            old_x = int(self.get_cfg("x", self.default_x))
+            old_y = int(self.get_cfg("y", self.default_y))
+            if abs(x - old_x) >= 2 or abs(y - old_y) >= 2:
+                self.set_cfg("anchor_preset", "")
+                self.set_cfg("x", x)
+                self.set_cfg("y", y)
             self._apply_z_order()
 
     def _render_to_canvas(self, composite, w, h):
@@ -1378,6 +1392,12 @@ class TodoListWidget(BaseDesktopWidget):
         self.hovered_zone = None
         self.scroll_offset = 0
         self._active_modal = None
+        self._task_map = {}
+        self._tip_win = None
+        self._tip_hwnd = None
+        self._tip_job = None
+        self._tip_tid = None
+        self._tip_photo = None
 
     def show(self):
         self._ensure_notebooks()
@@ -1389,6 +1409,7 @@ class TodoListWidget(BaseDesktopWidget):
             self.canvas.bind("<MouseWheel>", self._on_mousewheel)
 
     def hide(self):
+        self._hide_task_tooltip()
         self._close_modal()
         super().hide()
 
@@ -1489,18 +1510,151 @@ class TodoListWidget(BaseDesktopWidget):
                 return ("task", t_id)
         return None
 
+    def _hide_task_tooltip(self):
+        if self._tip_job:
+            try:
+                self.root.after_cancel(self._tip_job)
+            except Exception:
+                pass
+            self._tip_job = None
+        self._tip_tid = None
+        if self._tip_hwnd:
+            release_layered_surface(self._tip_hwnd)
+            self._tip_hwnd = None
+        if self._tip_win:
+            try:
+                if self._tip_win.winfo_exists():
+                    self._tip_win.destroy()
+            except Exception:
+                pass
+            self._tip_win = None
+        self._tip_photo = None
+
+    def _show_task_tooltip(self, t_id, rx, ry):
+        self._tip_job = None
+        if not self.window or not self.window.winfo_exists() or self._is_collapsed_view():
+            return
+        task = self._task_map.get(t_id)
+        if not task:
+            return
+        full_txt = (task.get("text") or "").strip()
+        if not full_txt:
+            return
+
+        _, active_nb = self._get_active_notebook()
+        nb_rgb = _hex_to_rgb(active_nb.get("color", "#3b82f6"), (59, 130, 246))
+        tag_lbl = (task.get("tag_label") or "").strip()
+        tag_col = _hex_to_rgb(task.get("tag_color", "#3b82f6"), nb_rgb) if tag_lbl else nb_rgb
+        sender = (task.get("from") or "").strip()
+        status_str = "Completada" if task.get("done") else "Pendiente"
+
+        max_w = int(340 * self.dpi_scale)
+        pad_x = int(14 * self.dpi_scale)
+        pad_y = int(10 * self.dpi_scale)
+        f_body = resolve_styled_font("Segoe UI", max(10, int(11 * self.dpi_scale)), bold=False)
+        f_meta = resolve_styled_font("Segoe UI", max(9, int(9.5 * self.dpi_scale)), bold=True)
+
+        tmp = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+        td = ImageDraw.Draw(tmp, "RGBA")
+        # Word-wrap full task text cleanly
+        wrap_w = max_w - pad_x * 2 - 8
+        words = full_txt.split()
+        lines = []
+        cur = ""
+        for w_tok in words:
+            cand = (cur + " " + w_tok).strip() if cur else w_tok
+            if td.textlength(cand, font=f_body) <= wrap_w:
+                cur = cand
+            else:
+                if cur:
+                    lines.append(cur)
+                while td.textlength(w_tok, font=f_body) > wrap_w and len(w_tok) > 12:
+                    cut = max(8, int(len(w_tok) * wrap_w / max(1, td.textlength(w_tok, font=f_body))))
+                    lines.append(w_tok[:cut])
+                    w_tok = w_tok[cut:]
+                cur = w_tok
+        if cur:
+            lines.append(cur)
+        if not lines:
+            lines = [full_txt]
+
+        max_line_w = max(td.textlength(ln, font=f_body) for ln in lines)
+        meta_parts = [active_nb.get("name", "To-Do"), status_str]
+        if tag_lbl:
+            meta_parts.append(tag_lbl)
+        if sender:
+            meta_parts.append(sender[:28])
+        meta_line = "  •  ".join(meta_parts)
+        meta_w = td.textlength(meta_line, font=f_meta)
+
+        box_w = min(max_w, max(int(160 * self.dpi_scale), int(max(max_line_w, meta_w) + pad_x * 2 + 12)))
+        line_h = max(16, int(17 * self.dpi_scale))
+        meta_h = max(15, int(16 * self.dpi_scale))
+        box_h = pad_y * 2 + meta_h + 6 + len(lines) * line_h
+
+        img = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img, "RGBA")
+        d.rounded_rectangle([1, 1, box_w - 2, box_h - 2], radius=12, fill=(14, 19, 30, 246), outline=(*tag_col, 190), width=1)
+        # Left comment accent bar
+        d.rounded_rectangle([5, 8, 9, box_h - 8], radius=2, fill=(*tag_col, 240))
+        d.text((pad_x + 6, pad_y), meta_line, fill=(*tag_col, 245), font=f_meta)
+        y_ln = pad_y + meta_h + 4
+        for ln in lines:
+            d.text((pad_x + 6, y_ln), ln, fill=(248, 250, 252, 255), font=f_body)
+            y_ln += line_h
+
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        wx = self.window.winfo_x()
+        # Place comment bubble to left of widget if near right edge, otherwise right/below cursor
+        if wx + self.win_w + box_w + 14 <= sw:
+            tx = wx + self.win_w + 8
+        elif wx - box_w - 8 >= 8:
+            tx = wx - box_w - 8
+        else:
+            tx = max(8, min(sw - box_w - 8, int(rx - box_w // 2)))
+        ty = max(36, min(sh - box_h - 14, int(ry - 16)))
+
+        self._hide_task_tooltip()
+        self._tip_tid = t_id
+        win = tk.Toplevel(self.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.config(bg="#010203")
+        hwnd = set_tool_window(win, owner_hwnd=None, layered=True, no_activate=True)
+        win.geometry(f"{box_w}x{box_h}+{tx}+{ty}")
+        win.update_idletasks()
+        self._tip_win = win
+        self._tip_hwnd = hwnd
+        if not update_layered_pil(hwnd, tx, ty, img):
+            c = tk.Canvas(win, width=box_w, height=box_h, bg="#010203", highlightthickness=0, bd=0)
+            c.pack()
+            self._tip_photo = ImageTk.PhotoImage(flatten_pil_for_colorkey(img, (1, 2, 3)))
+            c.create_image(0, 0, anchor=tk.NW, image=self._tip_photo)
+
     def _on_motion(self, event):
         hz = self._hit_zone(event.x, event.y)
         if hz != self.hovered_zone:
             self.hovered_zone = hz
             self._render()
+        if hz and hz[0] in ("task", "del_task"):
+            t_id = hz[1]
+            if t_id != self._tip_tid:
+                self._hide_task_tooltip()
+                self._tip_tid = t_id
+                self._tip_job = self.root.after(220, lambda tid=t_id, rx=event.x_root, ry=event.y_root: self._show_task_tooltip(tid, rx, ry))
+        else:
+            if self._tip_tid is not None or self._tip_job is not None:
+                self._hide_task_tooltip()
 
     def _on_leave(self, event):
+        self._hide_task_tooltip()
         if self.hovered_zone is not None:
             self.hovered_zone = None
             self._render()
 
     def _on_canvas_click(self, event):
+        self._hide_task_tooltip()
         if self._is_in_resize_zone(event.x, event.y):
             self._on_drag_start(event)
             return
@@ -2257,6 +2411,7 @@ class TodoListWidget(BaseDesktopWidget):
                 self.del_task_rects.append((dx1 - 2, cur_y, dx2 + 2, cur_y + row_h, t_id))
 
             self.task_rects.append((pad_x - 2, cur_y, dx1 - 3, cur_y + row_h, t_id))
+            self._task_map[t_id] = t
             cur_y += row_h
 
         # Interactive Scrollbar with clickable ▲ / ▼ arrows + thumb when list overflows
@@ -3088,9 +3243,21 @@ class DesktopMiniDockWidget(BaseDesktopWidget):
 
 
 class BatteryWidget(BaseDesktopWidget):
-    """Desktop Battery Telemetry Widget with 4 visual styles and ultra-low RAM polling."""
+    """Desktop Battery Telemetry Widget with 8 visual styles, frosted-blurred spent track, and low RAM polling."""
+
+    STYLE_LABELS = [
+        ("anillo", "Anillo Moderno"),
+        ("arco", "Velocímetro 180°"),
+        ("barra", "Batería Horizontal"),
+        ("segmentado", "Celdas Segmentadas"),
+        ("vertical", "Pila Vertical"),
+        ("neon", "Neón Energía"),
+        ("pildora", "Píldora Compacta"),
+        ("tarjeta", "Tarjeta Detallada"),
+    ]
+
     def __init__(self, root, config_mgr, on_open_settings=None):
-        super().__init__(root, config_mgr, "battery", default_x=320, default_y=50, default_w=230, default_h=96, on_open_settings=on_open_settings)
+        super().__init__(root, config_mgr, "battery", default_x=320, default_y=50, default_w=246, default_h=102, on_open_settings=on_open_settings)
         self._last_bat_sig = None
 
     def _start_update_loop(self):
@@ -3106,6 +3273,17 @@ class BatteryWidget(BaseDesktopWidget):
             except Exception:
                 pass
         self.update_job = self.root.after(4000, self._update_stats)
+
+    @staticmethod
+    def _composite_frosted_track(composite, draw_fn, blur_r=2.0):
+        """Draws the empty/spent gauge background onto a softly blurred frosted-glass layer so wallpaper never bleeds through."""
+        layer = Image.new("RGBA", composite.size, (0, 0, 0, 0))
+        ld = ImageDraw.Draw(layer, "RGBA")
+        draw_fn(ld)
+        blurred = layer.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        composite.alpha_composite(blurred)
+        # Subtle sharp frosted edge on top for clean definition
+        composite.alpha_composite(layer)
 
     def _render(self):
         if not self.window or not self.window.winfo_exists():
@@ -3141,7 +3319,7 @@ class BatteryWidget(BaseDesktopWidget):
             self._set_window_size_live(fw, fh)
 
         w, h = self.win_w, self.win_h
-        s = min(w / 230.0, h / 96.0) if self.get_cfg("custom_w") else self._get_effective_scale()
+        s = min(w / 246.0, h / 102.0) if self.get_cfg("custom_w") else self._get_effective_scale()
         w_style = self.get_cfg("widget_style", "cristal") or "cristal"
         show_sub = bool(self.get_cfg("show_status_text", True))
         sig = (
@@ -3164,79 +3342,219 @@ class BatteryWidget(BaseDesktopWidget):
 
         if not has_bat:
             st_label = "Corriente AC"
+            mode_badge = "AC"
             pct_label = "AC"
         else:
             pct_label = f"{pct}%"
             if charging:
                 st_label = "Cargando" if pct < 100 else "Carga completa"
+                mode_badge = "⚡ AC"
             elif saver:
-                st_label = "Ahorro activo"
+                st_label = "Ahorro de energía"
+                mode_badge = "Ahorro"
             elif life_min and life_min > 0:
                 hrs, mins = divmod(int(life_min), 60)
                 st_label = f"{hrs}h {mins:02d}m rest." if hrs > 0 else f"{mins} min rest."
+                mode_badge = "En batería"
             else:
                 st_label = "En batería"
+                mode_badge = "Normal"
 
-        f_big = self._get_styled_font(max(14, int(23 * s)), bold_default=True)
-        f_title = self._get_styled_font(max(9, int(10.5 * s)), bold_default=True)
-        f_sub = self._get_styled_font(max(9, int(10 * s)), bold_default=False)
+        f_big = self._get_styled_font(max(15, int(24 * s)), bold_default=True)
+        f_med = self._get_styled_font(max(12, int(16 * s)), bold_default=True)
+        f_title = self._get_styled_font(max(9, int(10 * s)), bold_default=True)
+        f_sub = self._get_styled_font(max(9, int(10.5 * s)), bold_default=False)
+        f_badge = self._get_styled_font(max(8, int(9 * s)), bold_default=True)
+
+        # Frosted dark-slate smoked tint for empty/spent track regions (non-transparent, blurred)
+        frosted_base = (15, 23, 42, 215)
+        frosted_sheen = (100, 116, 139, 95)
 
         if style == "barra":
             tx = pad
-            ty = pad
-            draw.text((tx, ty), "BATERÍA", fill=(148, 163, 184, 225), font=f_title)
-            draw.text((tx, ty + int(16 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            draw.text((tx, pad), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
+            draw.text((tx, pad + int(16 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
             if show_sub:
-                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(*accent_rgb, 240), font=f_sub)
-            bar_x1 = pad + int(84 * s)
-            bar_x2 = w - pad - btn_s - int(10 * s)
-            bar_h = max(14, int(20 * s))
-            bar_y1 = (h - bar_h) // 2 + int(3 * s)
+                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(*accent_rgb, 245), font=f_sub)
+            bar_x1 = pad + int(86 * s)
+            bar_x2 = w - pad - btn_s - int(12 * s)
+            bar_h = max(18, int(26 * s))
+            bar_y1 = (h - bar_h) // 2 + int(4 * s)
             bar_y2 = bar_y1 + bar_h
-            if bar_x2 > bar_x1 + 24:
-                alpha_rounded_rect(composite, [bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 3, fill=(255, 255, 255, 26), outline=(148, 163, 184, 140), width=1)
-                fill_w = max(4, int((bar_x2 - bar_x1 - 6) * (pct / 100.0)))
-                alpha_rounded_rect(composite, [bar_x1 + 3, bar_y1 + 3, bar_x1 + 3 + fill_w, bar_y2 - 3], radius=max(2, (bar_h - 6) // 3), fill=(*accent_rgb, 235))
+            if bar_x2 > bar_x1 + 28:
+                self._composite_frosted_track(
+                    composite,
+                    lambda ld: ld.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 3, fill=frosted_base, outline=frosted_sheen, width=2),
+                    blur_r=2.2,
+                )
+                draw = ImageDraw.Draw(composite, "RGBA")
+                fill_w = max(5, int((bar_x2 - bar_x1 - 8) * (pct / 100.0)))
+                alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=max(2, (bar_h - 8) // 3), fill=(*accent_rgb, 245))
                 cap_y1 = bar_y1 + bar_h // 4
                 cap_y2 = bar_y2 - bar_h // 4
-                draw.rounded_rectangle([bar_x2 + 1, cap_y1, bar_x2 + max(3, int(4 * s)), cap_y2], radius=2, fill=(148, 163, 184, 180))
+                draw.rounded_rectangle([bar_x2 + 2, cap_y1, bar_x2 + max(4, int(5 * s)), cap_y2], radius=2, fill=(148, 163, 184, 210))
+
+        elif style == "arco":
+            # 180° cockpit speedometer gauge with frosted-blurred spent track & single centered %
+            arc_d = min(int(w * 0.68), int((h - pad * 1.4) * 1.65))
+            arc_d = max(72, arc_d)
+            ax1 = (w - btn_s // 2 - arc_d) // 2
+            ay1 = pad + int(4 * s)
+            ax2 = ax1 + arc_d
+            ay2 = ay1 + arc_d
+            th = max(8, int(10 * s))
+            self._composite_frosted_track(
+                composite,
+                lambda ld: ld.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=(22, 32, 52, 225), width=th + 2),
+                blur_r=2.2,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
+            draw.arc([ax1, ay1, ax2, ay2], start=180, end=360, fill=(100, 116, 139, 120), width=th)
+            span = int(180 * (pct / 100.0))
+            if span > 0:
+                draw.arc([ax1, ay1, ax2, ay2], start=180, end=180 + span, fill=(*accent_rgb, 250), width=th)
+            cx_a = (ax1 + ax2) / 2.0
+            draw.text((cx_a, ay1 + arc_d * 0.34), pct_label, fill=(248, 250, 252, 255), font=f_big, anchor="mm")
+            if show_sub:
+                draw.text((cx_a, h - pad - int(7 * s)), f"{st_label}  •  {mode_badge}", fill=(203, 213, 225, 235), font=f_sub, anchor="mm")
+
+        elif style == "segmentado":
+            # 10 segmented glowing cells; spent cells use frosted-blurred smoked glass
+            draw.text((pad, pad), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
+            draw.text((w - pad - btn_s - int(8 * s), pad + int(7 * s)), pct_label, fill=(248, 250, 252, 255), font=f_med, anchor="rm")
+            seg_y1 = pad + int(28 * s)
+            seg_y2 = h - pad - (int(20 * s) if show_sub else int(4 * s))
+            seg_y2 = max(seg_y1 + 14, seg_y2)
+            n_segs = 10
+            gap = max(3, int(4 * s))
+            total_w = w - pad * 2
+            seg_w = max(6, (total_w - gap * (n_segs - 1)) // n_segs)
+            lit = int(round(pct / 10.0))
+            self._composite_frosted_track(
+                composite,
+                lambda ld: [
+                    ld.rounded_rectangle(
+                        [pad + i * (seg_w + gap), seg_y1, pad + i * (seg_w + gap) + seg_w, seg_y2],
+                        radius=max(3, int(4 * s)), fill=frosted_base, outline=frosted_sheen, width=1
+                    )
+                    for i in range(n_segs)
+                ],
+                blur_r=1.8,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
+            for i in range(lit):
+                sx1 = pad + i * (seg_w + gap)
+                alpha_rounded_rect(composite, [sx1, seg_y1, sx1 + seg_w, seg_y2], radius=max(3, int(4 * s)), fill=(*accent_rgb, 240), outline=(255, 255, 255, 95), width=1)
+            if show_sub:
+                draw.text((pad, h - pad - int(11 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
+                draw.text((w - pad, h - pad - int(11 * s)), mode_badge, fill=(*accent_rgb, 240), font=f_badge, anchor="rt")
+
+        elif style == "vertical":
+            # Tall vertical liquid battery capsule on left with frosted-blurred empty top + clean % right
+            vw = max(28, int(38 * s))
+            vh = max(46, h - pad * 2 - int(4 * s))
+            vx1, vy1 = pad + int(4 * s), (h - vh) // 2 + int(2 * s)
+            vx2, vy2 = vx1 + vw, vy1 + vh
+            # Cathode cap on top
+            cap_w = vw // 2
+            draw.rounded_rectangle([vx1 + (vw - cap_w) // 2, vy1 - max(4, int(5 * s)), vx1 + (vw + cap_w) // 2, vy1 + 1], radius=2, fill=(148, 163, 184, 215))
+            self._composite_frosted_track(
+                composite,
+                lambda ld: ld.rounded_rectangle([vx1, vy1, vx2, vy2], radius=max(6, int(9 * s)), fill=frosted_base, outline=frosted_sheen, width=2),
+                blur_r=2.0,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
+            inner_h = max(4, vh - 8)
+            fill_h = max(4, int(inner_h * (pct / 100.0)))
+            alpha_rounded_rect(composite, [vx1 + 4, vy2 - 4 - fill_h, vx2 - 4, vy2 - 4], radius=max(3, int(5 * s)), fill=(*accent_rgb, 240))
+            tx = vx2 + int(16 * s)
+            draw.text((tx, pad + int(2 * s)), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
+            draw.text((tx, pad + int(18 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            if show_sub:
+                draw.text((tx, h - pad - int(15 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
+
         elif style == "pildora":
-            bar_h = max(24, int(36 * s))
+            bar_h = max(26, int(38 * s))
             bar_y1 = (h - bar_h) // 2 + int(4 * s)
             bar_y2 = bar_y1 + bar_h
             bar_x1 = pad
             bar_x2 = w - pad - btn_s - int(8 * s)
-            alpha_rounded_rect(composite, [bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, fill=(255, 255, 255, 22), outline=(*accent_rgb, 145), width=2)
+            self._composite_frosted_track(
+                composite,
+                lambda ld: ld.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, fill=frosted_base, outline=(*accent_rgb, 155), width=2),
+                blur_r=2.2,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
             fill_w = max(bar_h - 8, int((bar_x2 - bar_x1 - 8) * (pct / 100.0)))
-            alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=(bar_h - 8) // 2, fill=(*accent_rgb, 195))
-            draw.text((bar_x1 + int(14 * s), (bar_y1 + bar_y2) // 2), pct_label, fill=(255, 255, 255, 255), font=self._get_styled_font(max(12, int(15 * s)), bold_default=True), anchor="lm")
+            alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=(bar_h - 8) // 2, fill=(*accent_rgb, 215))
+            draw.text((bar_x1 + int(14 * s), (bar_y1 + bar_y2) // 2), pct_label, fill=(255, 255, 255, 255), font=f_med, anchor="lm")
             if show_sub and (bar_x2 - bar_x1) > 120:
-                draw.text((bar_x2 - int(12 * s), (bar_y1 + bar_y2) // 2), st_label, fill=(241, 245, 249, 230), font=f_sub, anchor="rm")
+                draw.text((bar_x2 - int(12 * s), (bar_y1 + bar_y2) // 2), st_label, fill=(241, 245, 249, 240), font=f_sub, anchor="rm")
+
+        elif style == "tarjeta":
+            # Executive card: title + single % + full-width frosted progress bar + status footer
+            draw.text((pad, pad), "ENERGÍA DEL EQUIPO", fill=(148, 163, 184, 235), font=f_title)
+            draw.text((pad, pad + int(15 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            bw = int(draw.textlength(mode_badge, font=f_badge)) + int(14 * s)
+            bx2_b = w - pad - btn_s - int(8 * s)
+            if bx2_b - bw > pad + int(70 * s):
+                alpha_rounded_rect(composite, [bx2_b - bw, pad + int(22 * s), bx2_b, pad + int(40 * s)], radius=int(8 * s), fill=(*accent_rgb, 55), outline=(*accent_rgb, 190), width=1)
+                draw.text((bx2_b - bw / 2.0, pad + int(31 * s)), mode_badge, fill=(248, 250, 252, 250), font=f_badge, anchor="mm")
+            bar_h = max(10, int(13 * s))
+            bar_y1 = h - pad - (int(24 * s) if show_sub else int(12 * s))
+            bar_y2 = bar_y1 + bar_h
+            self._composite_frosted_track(
+                composite,
+                lambda ld: ld.rounded_rectangle([pad, bar_y1, w - pad, bar_y2], radius=bar_h // 2, fill=frosted_base, outline=frosted_sheen, width=1),
+                blur_r=2.0,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
+            fw_t = max(bar_h, int((w - pad * 2) * (pct / 100.0)))
+            alpha_rounded_rect(composite, [pad, bar_y1, pad + fw_t, bar_y2], radius=bar_h // 2, fill=(*accent_rgb, 245))
+            if show_sub:
+                draw.text((pad, h - pad - int(10 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
+
         else:
-            # "anillo" & "neon" circular gauge styles
-            ring_d = min(h - pad * 2, int(68 * s))
-            ring_d = max(36, ring_d)
+            # "anillo" & "neon": Frosted-blurred smoked donut track + SINGLE % inside ring (zero redundancy!)
+            ring_d = min(h - pad * 2, int(72 * s))
+            ring_d = max(44, ring_d)
             rx1 = pad
             ry1 = (h - ring_d) // 2
             rx2 = rx1 + ring_d
             ry2 = ry1 + ring_d
-            thick = max(4, int((7 if style == "neon" else 6) * s))
-            if style == "neon":
-                draw.arc([rx1 - 2, ry1 - 2, rx2 + 2, ry2 + 2], start=-90, end=-90 + int(360 * (pct / 100.0)), fill=(*accent_rgb, 80), width=thick + 4)
-            draw.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(255, 255, 255, 32), width=thick)
-            span = int(360 * (pct / 100.0))
-            if span > 0:
-                draw.arc([rx1, ry1, rx2, ry2], start=-90, end=-90 + span, fill=(*accent_rgb, 245), width=thick)
-            draw.text(((rx1 + rx2) / 2, (ry1 + ry2) / 2), pct_label, fill=(248, 250, 252, 255), font=self._get_styled_font(max(11, int(14 * s)), bold_default=True), anchor="mm")
+            thick = max(6, int((8 if style == "neon" else 7) * s))
 
+            # Frosted smoked-glass disk + blurred spent track ring so desktop icons never bleed through
+            self._composite_frosted_track(
+                composite,
+                lambda ld: (
+                    ld.ellipse([rx1 + 2, ry1 + 2, rx2 - 2, ry2 - 2], fill=(12, 18, 30, 195)),
+                    ld.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(51, 65, 85, 225), width=thick + 2),
+                ),
+                blur_r=2.4,
+            )
+            draw = ImageDraw.Draw(composite, "RGBA")
+            draw.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(100, 116, 139, 130), width=thick)
+            span = int(360 * (pct / 100.0))
+            if style == "neon" and span > 0:
+                draw.arc([rx1 - 2, ry1 - 2, rx2 + 2, ry2 + 2], start=-90, end=-90 + span, fill=(*accent_rgb, 95), width=thick + 5)
+            if span > 0:
+                draw.arc([rx1, ry1, rx2, ry2], start=-90, end=-90 + span, fill=(*accent_rgb, 252), width=thick)
+            draw.text(((rx1 + rx2) / 2, (ry1 + ry2) / 2), pct_label, fill=(248, 250, 252, 255), font=self._get_styled_font(max(12, int(15 * s)), bold_default=True), anchor="mm")
+
+            # Right column: clean telemetry WITHOUT repeating the percentage!
             tx = rx2 + int(14 * s)
-            draw.text((tx, pad + int(2 * s)), "BATERÍA", fill=(*accent_rgb, 235) if style == "neon" else (148, 163, 184, 225), font=f_title)
-            draw.text((tx, pad + int(20 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            draw.text((tx, pad + int(3 * s)), "BATERÍA", fill=(*accent_rgb, 245) if style == "neon" else (148, 163, 184, 235), font=f_title)
             if show_sub:
-                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(203, 213, 225, 230), font=f_sub)
+                draw.text((tx, pad + int(22 * s)), st_label, fill=(248, 250, 252, 250), font=self._get_styled_font(max(11, int(13 * s)), bold_default=True))
+            # Compact status pill badge below status text
+            pb_w = int(draw.textlength(mode_badge, font=f_badge)) + int(14 * s)
+            pb_y1 = h - pad - int(20 * s)
+            pb_y2 = h - pad - int(2 * s)
+            alpha_rounded_rect(composite, [tx, pb_y1, min(w - pad, tx + pb_w), pb_y2], radius=int(8 * s), fill=(*accent_rgb, 55), outline=(*accent_rgb, 180), width=1)
+            draw.text((tx + min(w - pad - tx, pb_w) / 2.0, (pb_y1 + pb_y2) / 2.0), mode_badge, fill=(241, 245, 249, 250), font=f_badge, anchor="mm")
 
         if charging:
-            # Tiny clean bolt glyph near status
             bx = w - pad - btn_s - int(14 * s)
             by = pad + btn_s // 2 - 2
             draw.polygon([(bx + 2, by - 5), (bx - 3, by + 1), (bx + 1, by + 1), (bx - 2, by + 6), (bx + 4, by - 1), (bx, by - 1)], fill=(250, 204, 21, 245))
@@ -3261,11 +3579,9 @@ class BatteryWidget(BaseDesktopWidget):
         from custom_menu import CustomMenu
         menu = CustomMenu(self.window)
         cur_st = (self.get_cfg("style", "anillo") or "anillo").lower()
-        sec_st = menu.add_section("Estilo de Batería", expanded=True)
-        sec_st.add_command("Anillo Circular", lambda: self._set_style("anillo"), checked=(cur_st == "anillo"))
-        sec_st.add_command("Barra Horizontal", lambda: self._set_style("barra"), checked=(cur_st == "barra"))
-        sec_st.add_command("Neón Energía", lambda: self._set_style("neon"), checked=(cur_st == "neon"))
-        sec_st.add_command("Píldora Compacta", lambda: self._set_style("pildora"), checked=(cur_st == "pildora"))
+        sec_st = menu.add_section("Diseño de Batería", expanded=True)
+        for st_id, st_lbl in self.STYLE_LABELS:
+            sec_st.add_command(st_lbl, lambda k=st_id: self._set_style(k), checked=(cur_st == st_id))
         sec_st.add_separator()
         sec_st.add_command("Color de acento...", self._pick_accent)
         sec_st.add_command("Configuración de Energía Windows...", lambda: os.startfile("ms-settings:batterysaver"))

@@ -22,7 +22,18 @@ DEFAULT_CONFIG = {
         "show_open_windows": False,          # Show unpinned open apps on the right side of the dock
         "launcher_mode": "custom",           # "custom" (macOS-style app drawer) or "windows" (Win Key)
         "media_capsule_enabled": False,      # Centered media player capsule above Dockbar
-        "media_capsule_style": "cristal"     # "cristal", "neon", "minimal", "oled", "acrilico"
+        "media_capsule_style": "cristal",    # "cristal", "neon", "minimal", "oled", "acrilico", "editorial"
+        "media_capsule_scale": 1.0,          # Capsule size scale (0.75 to 1.45)
+        "media_capsule_width": 360,          # Base capsule width in px (260 to 560)
+        "media_capsule_opacity": 0.90,       # Background transparency (0.15 to 1.0)
+        "media_capsule_bg_color": "",        # Optional custom background hex
+        "media_capsule_accent_color": "",    # Optional custom accent/button hex
+        "media_capsule_font_family": "Segoe UI",
+        "media_capsule_font_size": 11,       # Title font size (9 to 18 px)
+        "media_capsule_title_color": "#f8fafc",
+        "media_capsule_artist_color": "#94a3b8",
+        "media_capsule_btn_pos": "right",    # "right", "left", "center", "split"
+        "media_capsule_offset_y": 10         # Gap between Dockbar and capsule (4 to 48 px)
     },
     "appearance": {
         "edge_offset": 6,                    # Distance between dock and screen edge (0 to 60px)
@@ -62,7 +73,7 @@ DEFAULT_CONFIG = {
         "bounce_on_launch": True,            # Legacy compatibility switch
         "launch_effect": "gota_energia",     # "gota_energia", "gota_rebote", "pulso_neon", "levitacion", "pop_elastico", "rebote", "ninguno"
         "launch_effect_speed": 1.0,          # Speed multiplier (0.4x slow to 2.5x fast)
-        "launch_effect_color": "#38bdf8",    # Electric water/energy blue default
+        "launch_effect_color": "#0078d4",    # Vibrant Outlook water/energy blue default
         "show_running_indicators": True,     # Open apps indicator underneath running apps
         "indicator_style": "dot",            # "dot", "pill", "line", "ring", "diamond"
         "indicator_color": "#60a5fa",

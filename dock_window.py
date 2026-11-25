@@ -532,7 +532,32 @@ class DockWindow:
         self._start_animation_loop()
         self._start_edge_sensor_loop()
         self._scan_running_apps()
+        self.root.after(1500, self._warm_launcher_bg)
         self.root.after(4500, lambda: self._idle_memory_trim(force=True))
+
+    def _warm_launcher_bg(self):
+        try:
+            import app_launcher
+            app_launcher.warm_launcher_cache()
+        except Exception:
+            pass
+
+    def _add_app_from_launcher(self, app):
+        if not app:
+            return
+        new_item = {
+            "type": "app",
+            "name": (app.get("name") or "App").strip(),
+            "target": (app.get("target") or "").strip(),
+            "args": (app.get("args") or "").strip(),
+            "icon_path": "",
+        }
+        if not new_item["target"]:
+            return
+        self.config_mgr.add_item(new_item)
+        self.reload_items()
+        self.update_geometry()
+        self._render_composite_dock()
 
     @staticmethod
     def _is_browser_pwa_window(w):
@@ -2182,9 +2207,10 @@ class DockWindow:
         self.item_rects = []
         cur_x = pill_x1 + pad_x
         eff_speed = max(0.35, min(3.0, float(self.config_mgr.get("appearance", "launch_effect_speed", 1.0) or 1.0)))
-        eff_dur = 1.05 / eff_speed
-        eff_rgb = hex_to_rgb(self.config_mgr.get("appearance", "launch_effect_color", "#38bdf8"))
+        eff_dur = 1.25 / eff_speed
+        eff_rgb = hex_to_rgb(self.config_mgr.get("appearance", "launch_effect_color", "#0078d4"))
         er, eg, eb = eff_rgb
+        er_hi, eg_hi, eb_hi = min(255, er + 55), min(255, eg + 90), min(255, eb + 45)
         now_eff = time.time()
 
         for i, it in enumerate(self.items):
@@ -2278,41 +2304,50 @@ class DockWindow:
                 icy = int(item_y + size * 0.5)
                 floor_y = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
 
-                # Under-icon launch aura / 3D ripples / volumetric beam
+                # Under-icon launch aura / thick Outlook-blue 3D ripples / volumetric beam
                 if active_eff in ("gota_energia", "gota_rebote"):
-                    # 1) Caustic luminous pool under icon
-                    pool_r = int(size * (0.44 + 0.30 * math.sin(p_eff * math.pi)))
-                    alpha_ellipse(composite, [icx - pool_r, icy - pool_r, icx + pool_r, icy + pool_r], fill=(er, eg, eb, int(92 * decay)))
-                    # 2) Concentric 3D perspective floor ripples (inspired by aqua splash waves)
-                    for rw_i, dly in enumerate((0.0, 0.14, 0.30)):
+                    # 1) Deep luminous caustic splash pool beneath icon
+                    pool_r = int(size * (0.55 + 0.36 * math.sin(p_eff * math.pi)))
+                    alpha_ellipse(composite, [icx - pool_r, icy - pool_r, icx + pool_r, icy + pool_r], fill=(er, eg, eb, int(135 * decay)))
+                    # 2) Thick, bold 3D perspective concentric floor waves (Outlook royal -> electric aqua)
+                    for rw_i, dly in enumerate((0.0, 0.13, 0.27)):
                         if p_eff >= dly:
                             lp = min(1.0, (p_eff - dly) / max(0.1, 1.0 - dly))
-                            ld = (1.0 - lp) ** 1.15
-                            rx_f = int(size * (0.28 + 1.15 * lp))
-                            ry_f = max(3, int(rx_f * 0.25))
-                            ra = int((235 - rw_i * 45) * ld)
-                            if ra > 6:
+                            ld = (1.0 - lp) ** 0.95
+                            rx_f = int(size * (0.34 + 1.38 * lp))
+                            ry_f = max(5, int(rx_f * 0.28))
+                            ra_outer = int((240 - rw_i * 35) * ld)
+                            ra_inner = int((255 - rw_i * 30) * ld)
+                            if ra_outer > 8:
                                 alpha_ellipse(
                                     composite,
                                     [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f],
-                                    fill=(er, eg, eb, int(36 * ld)) if rw_i == 0 else None,
-                                    outline=(min(255, er + 70), min(255, eg + 65), 255, ra),
+                                    fill=(er, eg, eb, int(68 * ld)) if rw_i == 0 else None,
+                                    outline=(er, eg, eb, ra_outer),
+                                    width=7 if rw_i == 0 else 5,
+                                )
+                                alpha_ellipse(
+                                    composite,
+                                    [icx - rx_f + 2, floor_y - ry_f + 1, icx + rx_f - 2, floor_y + ry_f - 1],
+                                    outline=(er_hi, eg_hi, 255, ra_inner),
                                     width=3 if rw_i == 0 else 2,
                                 )
-                    # 3) Back crown splash lobes rising behind/around the icon
-                    if p_eff < 0.85:
-                        sp_t = p_eff / 0.85
-                        rise = math.sin(min(1.0, sp_t * 1.15) * math.pi)
-                        sp_a = int(215 * (1.0 - sp_t * 0.8))
+                    # 3) Lush thick crown splash plumes arcing up around both flanks of the icon
+                    if p_eff < 0.88:
+                        sp_t = p_eff / 0.88
+                        rise = math.sin(min(1.0, sp_t * 1.12) * math.pi)
+                        sp_a = int(245 * (1.0 - sp_t * 0.72))
                         for side in (-1, 1):
-                            for k_lobe in range(3):
-                                ang = math.radians(-105 + side * (22 + k_lobe * 14))
-                                len_sp = size * (0.45 + 0.42 * rise) * (1.0 - k_lobe * 0.12)
-                                bx0 = icx + side * size * (0.22 + k_lobe * 0.08)
+                            for k_lobe in range(4):
+                                ang = math.radians(-108 + side * (16 + k_lobe * 14))
+                                len_sp = size * (0.55 + 0.56 * rise) * (1.0 - k_lobe * 0.10)
+                                bx0 = icx + side * size * (0.18 + k_lobe * 0.08)
                                 by0 = floor_y - 2
-                                tx0 = icx + math.cos(ang) * len_sp + side * (size * 0.18)
-                                ty0 = floor_y + math.sin(ang) * len_sp
-                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(min(255, er + 80), min(255, eg + 70), 255, sp_a), width=max(2, 4 - k_lobe))
+                                tx0 = icx + math.cos(ang) * len_sp + side * (size * 0.22)
+                                ty0 = max(3, floor_y + math.sin(ang) * len_sp)
+                                w_outer = max(4, 8 - k_lobe)
+                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(er, eg, eb, sp_a), width=w_outer)
+                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(er_hi, eg_hi, 255, min(255, sp_a + 15)), width=max(2, w_outer - 3))
                 elif active_eff == "pulso_neon":
                     pulse = abs(math.sin(p_eff * math.pi * 3.0))
                     r2 = int(size * (0.64 + 0.34 * pulse))
@@ -2371,25 +2406,38 @@ class DockWindow:
                         dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
                         composite.alpha_composite(resized, (dx_ic, dy_ic))
 
-                # Over-icon crown splashes, ballistic water droplets & nova rays
+                # Over-icon thick glowing water crown & vivid ballistic droplets
                 if active_eff in ("gota_energia", "gota_rebote"):
-                    # Luminous base crown arc wrapping lower edges of icon
-                    cr_rx = int(size * (0.48 + 0.14 * math.sin(p_eff * math.pi)))
-                    cr_ry = int(size * (0.24 + 0.10 * math.sin(p_eff * math.pi)))
-                    crown_a = int(240 * decay)
-                    draw.arc([icx - cr_rx, floor_y - cr_ry * 2, icx + cr_rx, floor_y + 2], start=12, end=168, fill=(min(255, er + 100), min(255, eg + 100), 255, crown_a), width=3)
-                    # Ballistic specular water droplets arcing upward and outward
-                    for d_i, (ang_deg, spd_m, d_sz) in enumerate([(-132, 0.95, 4), (-110, 1.15, 5), (-90, 1.05, 4), (-70, 1.18, 5), (-48, 0.92, 4), (-150, 0.80, 3), (-30, 0.80, 3)]):
-                        dp = min(1.0, p_eff / 0.88)
+                    # Thick translucent Outlook-blue crown rim wrapping lower edges of icon
+                    cr_rx = int(size * (0.56 + 0.22 * math.sin(p_eff * math.pi)))
+                    cr_ry = int(size * (0.28 + 0.14 * math.sin(p_eff * math.pi)))
+                    crown_a = int(250 * (decay ** 0.85))
+                    draw.arc([icx - cr_rx, floor_y - cr_ry * 2, icx + cr_rx, floor_y + 3], start=8, end=172, fill=(er, eg, eb, crown_a), width=7)
+                    draw.arc([icx - cr_rx + 2, floor_y - cr_ry * 2 + 2, icx + cr_rx - 2, floor_y + 1], start=14, end=166, fill=(er_hi, eg_hi, 255, crown_a), width=3)
+                    # Expanding vertical halo ring around icon center
+                    ring_r = int(size * (0.38 + 0.72 * p_eff))
+                    ring_a = int(215 * (decay ** 0.9))
+                    if ring_a > 10:
+                        alpha_ellipse(composite, [icx - ring_r, icy - ring_r, icx + ring_r, icy + ring_r], outline=(er, eg, eb, ring_a), width=5)
+                        alpha_ellipse(composite, [icx - ring_r + 2, icy - ring_r + 2, icx + ring_r - 2, icy + ring_r - 2], outline=(er_hi, eg_hi, 255, ring_a), width=2)
+                    # Bold ballistic water droplets with Outlook-blue halo & crisp white core
+                    drop_specs = [
+                        (-148, 0.95, 5), (-130, 1.18, 6), (-112, 1.32, 7),
+                        (-94, 1.25, 6), (-76, 1.34, 7), (-56, 1.16, 6),
+                        (-36, 0.96, 5), (-160, 0.82, 4), (-22, 0.82, 4),
+                    ]
+                    for ang_deg, spd_m, d_sz in drop_specs:
+                        dp = min(1.0, p_eff / 0.90)
                         ang_r = math.radians(ang_deg)
                         dist_d = size * spd_m * dp
-                        grav_d = (size * 0.52) * (dp ** 2)
+                        grav_d = (size * 0.56) * (dp ** 2)
                         dx_p = int(icx + math.cos(ang_r) * dist_d)
-                        dy_p = max(2, int(icy + math.sin(ang_r) * dist_d + grav_d))
-                        da = int(245 * (1.0 - dp ** 1.5))
-                        if da > 8:
-                            dr = max(2, int(d_sz * (1.0 - dp * 0.35)))
-                            alpha_ellipse(composite, [dx_p - dr, dy_p - dr, dx_p + dr, dy_p + dr], fill=(224, 248, 255, da), outline=(er, eg, eb, min(255, da)), width=1)
+                        dy_p = max(4, int(icy + math.sin(ang_r) * dist_d + grav_d))
+                        da = int(250 * (1.0 - dp ** 1.35))
+                        if da > 10:
+                            dr = max(3, int(d_sz * (1.0 - dp * 0.28)))
+                            alpha_ellipse(composite, [dx_p - dr - 2, dy_p - dr - 2, dx_p + dr + 2, dy_p + dr + 2], fill=(er, eg, eb, int(da * 0.75)))
+                            alpha_ellipse(composite, [dx_p - dr, dy_p - dr, dx_p + dr, dy_p + dr], fill=(er_hi, eg_hi, 255, da), outline=(255, 255, 255, da), width=1)
                 elif active_eff == "pop_elastico":
                     for k_ang in range(10):
                         ang = (k_ang * math.pi / 5.0) + (p_eff * 0.42)
@@ -3416,20 +3464,31 @@ class DockWindow:
                         pos = self.config_mgr.get("general", "position", "bottom")
                         def _on_launch_done():
                             self.active_launcher = None
-                        self.active_launcher = CustomAppLauncher(
-                            self.root,
-                            dock_pos=pos,
-                            on_close=_on_launch_done,
-                            on_launch_feedback=lambda: None,
-                        )
+                        ax, ay = None, None
                         if anchor_rect:
                             dx = getattr(self, "dock_x", 0)
                             dy = getattr(self, "dock_y", 0)
                             ax = int(dx + (anchor_rect[0] + anchor_rect[2]) // 2)
-                            ay = int(dy + anchor_rect[1]) if pos == "bottom" else int(dy + anchor_rect[3])
-                            self.active_launcher.show(anchor_x=ax, anchor_y=ay)
-                        else:
-                            self.active_launcher.show()
+                            pb = getattr(self, "pill_bounds", (0, 0, getattr(self, "dock_w", 600), getattr(self, "dock_h", 80)))
+                            if pos == "bottom":
+                                ay = int(dy + pb[1])
+                            elif pos == "top":
+                                ay = int(dy + pb[3])
+                            elif pos == "left":
+                                ax = int(dx + pb[2])
+                                ay = int(dy + (anchor_rect[1] + anchor_rect[3]) // 2)
+                            else:
+                                ax = int(dx + pb[0])
+                                ay = int(dy + (anchor_rect[1] + anchor_rect[3]) // 2)
+                        self.active_launcher = CustomAppLauncher(
+                            self.root,
+                            dock_pos=pos,
+                            anchor_x=ax,
+                            anchor_y=ay,
+                            on_close=_on_launch_done,
+                            on_launch_feedback=lambda: None,
+                            on_add_to_dock=self._add_app_from_launcher,
+                        )
                 return
             if action_type == "show_desktop":
                 try:

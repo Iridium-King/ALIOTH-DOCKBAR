@@ -2,7 +2,9 @@
 Centered floating Media Player Control Capsule displayed neatly over the Dockbar.
 Reads live active player metadata (Spotify, YouTube/Chrome/Edge, Apple Music, VLC, etc.)
 via a single persistent lightweight Windows Runtime SMTC session stream, and executes
-zero-latency media controls via Win32 VK_MEDIA_* keys + SMTC command fallback.
+zero-latency media controls via Win32 VK_MEDIA_* keys.
+Fully customizable: size/scale, width, opacity, custom colors, font family/size/colors,
+button position (right/left/center/split), visual style, and vertical gap over Dockbar.
 """
 import ctypes
 import json
@@ -10,7 +12,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageTk
 
 from window_utils import (
     alpha_ellipse,
@@ -91,11 +93,20 @@ def _send_media_vk(vk_code):
         pass
 
 
-class MediaCapsule:
-    """Floating centered media control pill anchored over the Dockbar."""
+def _hex_to_rgb(hex_str, default=(18, 22, 32)):
+    try:
+        h = str(hex_str or "").strip().lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) == 6:
+            return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        pass
+    return default
 
-    WIDTH = 344
-    HEIGHT = 46
+
+class MediaCapsule:
+    """Floating centered, fully customizable media control pill anchored over the Dockbar."""
 
     def __init__(self, dock_window):
         self.dock = dock_window
@@ -109,6 +120,8 @@ class MediaCapsule:
         self.transparent_key = "#010203"
         self.photo_ref = None
 
+        self.cur_w = 360
+        self.cur_h = 48
         self.win_x = 0
         self.win_y = 0
         self.btn_boxes = []  # [(x1, y1, x2, y2, action), ...]
@@ -116,7 +129,6 @@ class MediaCapsule:
         self._hover_inside = False
         self._last_render_sig = None
 
-        # Live media state updated by single persistent SMTC daemon thread
         self.media_state = {
             "active": False,
             "title": "Sin reproducción activa",
@@ -132,13 +144,20 @@ class MediaCapsule:
     def is_enabled(self):
         return bool(self.config_mgr.get("general", "media_capsule_enabled", False))
 
+    def _compute_dims(self):
+        scale = max(0.75, min(1.50, float(self.config_mgr.get("general", "media_capsule_scale", 1.0) or 1.0)))
+        base_w = max(240, min(600, int(self.config_mgr.get("general", "media_capsule_width", 360) or 360)))
+        btn_pos = (self.config_mgr.get("general", "media_capsule_btn_pos", "right") or "right").lower()
+        base_h = 68 if btn_pos == "center" else 48
+        return max(220, int(base_w * scale)), max(38, int(base_h * scale)), scale, btn_pos
+
     def sync_visibility(self):
         if self.is_enabled():
             if not self.window or not self.window.winfo_exists():
                 self.show()
             else:
                 self.reposition()
-                self._render()
+                self._render(force=True)
         else:
             self.hide()
 
@@ -146,6 +165,9 @@ class MediaCapsule:
         if self.window and self.window.winfo_exists():
             return
         self._stop_flag = False
+        w, h, _, _ = self._compute_dims()
+        self.cur_w, self.cur_h = w, h
+
         self.window = tk.Toplevel(self.root)
         self.window.overrideredirect(True)
         self.window.config(bg=self.transparent_key)
@@ -154,8 +176,8 @@ class MediaCapsule:
 
         self.canvas = tk.Canvas(
             self.window,
-            width=self.WIDTH,
-            height=self.HEIGHT,
+            width=w,
+            height=h,
             bg=self.transparent_key,
             highlightthickness=0,
             bd=0,
@@ -212,7 +234,7 @@ class MediaCapsule:
                         text=True,
                         encoding="utf-8",
                         errors="ignore",
-                        creationflags=0x08000000,  # CREATE_NO_WINDOW
+                        creationflags=0x08000000,
                     )
                     for raw_line in iter(self._smtc_proc.stdout.readline, ""):
                         if self._stop_flag:
@@ -250,24 +272,29 @@ class MediaCapsule:
     def reposition(self):
         if not self.window or not self.window.winfo_exists():
             return
+        w, h, _, _ = self._compute_dims()
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
         pos = self.config_mgr.get("general", "position", "bottom")
+        gap_y = max(4, min(60, int(self.config_mgr.get("general", "media_capsule_offset_y", 10) or 10)))
         dx = getattr(self.dock, "dock_x", (sw - 600) // 2)
         dy = getattr(self.dock, "dock_y", sh - 90)
         dw = getattr(self.dock, "dock_w", 600)
         pb = getattr(self.dock, "pill_bounds", (0, 0, dw, 64))
 
         pill_cx = dx + (pb[0] + pb[2]) // 2
-        nx = max(8, min(sw - self.WIDTH - 8, int(pill_cx - self.WIDTH // 2)))
+        nx = max(8, min(sw - w - 8, int(pill_cx - w // 2)))
         if pos == "top":
-            ny = min(sh - self.HEIGHT - 8, int(dy + pb[3] + 8))
+            ny = min(sh - h - 8, int(dy + pb[3] + gap_y))
         else:
-            ny = max(8, int(dy + pb[1] - self.HEIGHT - 8))
+            ny = max(8, int(dy + pb[1] - h - gap_y))
 
-        if nx != self.win_x or ny != self.win_y:
+        if nx != self.win_x or ny != self.win_y or w != self.cur_w or h != self.cur_h:
             self.win_x, self.win_y = nx, ny
-            self.window.geometry(f"{self.WIDTH}x{self.HEIGHT}+{nx}+{ny}")
+            self.cur_w, self.cur_h = w, h
+            self.window.geometry(f"{w}x{h}+{nx}+{ny}")
+            if self.canvas:
+                self.canvas.config(width=w, height=h)
 
     def sync_z_order(self, revealed, anchor=0):
         if not self.hwnd or not user32.IsWindow(self.hwnd):
@@ -314,99 +341,177 @@ class MediaCapsule:
     def _on_right_click(self, event):
         from custom_menu import CustomMenu
         menu = CustomMenu(self.window)
-        cur = self.config_mgr.get("general", "media_capsule_style", "cristal")
-        menu.add_header("Estilo de Cápsula Multimedia")
+        cur_st = self.config_mgr.get("general", "media_capsule_style", "cristal")
+        cur_bp = self.config_mgr.get("general", "media_capsule_btn_pos", "right")
+        sec_st = menu.add_section("Estilo de Cápsula", expanded=False)
         for sid, lbl in (
             ("cristal", "Cristal Oscuro"),
             ("neon", "Neón Eléctrico"),
             ("minimal", "Minimal Suave"),
             ("oled", "Negro OLED"),
             ("acrilico", "Acrílico Azul"),
+            ("editorial", "Editorial Dorado"),
         ):
-            menu.add_command(lbl, lambda k=sid: (self.config_mgr.set("general", "media_capsule_style", k), self._render(force=True)), checked=(cur == sid))
+            sec_st.add_command(lbl, lambda k=sid: (self.config_mgr.set("general", "media_capsule_style", k), self._render(force=True)), checked=(cur_st == sid))
+
+        sec_bp = menu.add_section("Posición de Botones", expanded=False)
+        for bpid, bplbl in (
+            ("right", "Controles a la Derecha"),
+            ("left", "Controles a la Izquierda"),
+            ("center", "Centrados Abajo"),
+            ("split", "Divididos (Izq / Der)"),
+        ):
+            sec_bp.add_command(bplbl, lambda k=bpid: (self.config_mgr.set("general", "media_capsule_btn_pos", k), self.reposition(), self._render(force=True)), checked=(cur_bp == bpid))
+
         menu.add_separator()
+        if getattr(self.dock, "on_open_settings", None):
+            menu.add_command("Personalizar Cápsula en Ajustes...", self.dock.on_open_settings)
         menu.add_command("Ocultar cápsula de reproductor", lambda: (self.config_mgr.set("general", "media_capsule_enabled", False), self.hide()), danger=True)
         menu.show(event.x_root, event.y_root)
+
+    def _draw_ctrl_btn(self, composite, draw, act, bcx, bcy, scale, acc_rgb, playing):
+        r = max(10, int((14 if act == "play_pause" else 12) * scale))
+        box = (int(bcx - r), int(bcy - r), int(bcx + r), int(bcy + r))
+        self.btn_boxes.append((*box, act))
+        is_hov = (self.hovered_btn == act)
+        if act == "play_pause":
+            fill_b = (*acc_rgb, 235 if is_hov else 185)
+            alpha_ellipse(composite, list(box), fill=fill_b, outline=(255, 255, 255, 200 if is_hov else 115), width=1)
+            p = max(4, int(5 * scale))
+            if playing:
+                bw = max(2, int(3 * scale))
+                draw.rectangle([bcx - p + 1, bcy - p, bcx - p + 1 + bw, bcy + p], fill=(255, 255, 255, 255))
+                draw.rectangle([bcx + p - 1 - bw, bcy - p, bcx + p - 1, bcy + p], fill=(255, 255, 255, 255))
+            else:
+                draw.polygon([(bcx - int(3 * scale), bcy - p - 1), (bcx - int(3 * scale), bcy + p + 1), (bcx + int(6 * scale), bcy)], fill=(255, 255, 255, 255))
+        else:
+            if is_hov:
+                alpha_ellipse(composite, list(box), fill=(255, 255, 255, 38))
+            col_i = (255, 255, 255, 255) if is_hov else (203, 213, 225, 235)
+            p = max(4, int(5 * scale))
+            if act == "prev":
+                draw.line([(bcx - p, bcy - p), (bcx - p, bcy + p)], fill=col_i, width=max(2, int(2 * scale)))
+                draw.polygon([(bcx + p, bcy - p), (bcx + p, bcy + p), (bcx - p + 2, bcy)], fill=col_i)
+            else:
+                draw.polygon([(bcx - p, bcy - p), (bcx - p, bcy + p), (bcx + p - 2, bcy)], fill=col_i)
+                draw.line([(bcx + p, bcy - p), (bcx + p, bcy + p)], fill=col_i, width=max(2, int(2 * scale)))
+
+    def _draw_eq_badge(self, composite, draw, cx_ic, cy_ic, scale, acc_rgb, playing):
+        r = max(9, int(11 * scale))
+        alpha_ellipse(composite, [cx_ic - r, cy_ic - r, cx_ic + r, cy_ic + r], fill=(*acc_rgb, 52), outline=(*acc_rgb, 195), width=1)
+        heights = (9, 13, 7) if playing else (5, 8, 5)
+        step = max(3, int(4 * scale))
+        for idx_b, bh in enumerate(heights):
+            bh_s = max(4, int(bh * scale))
+            bx = cx_ic - step + idx_b * step
+            draw.line([(bx, cy_ic + bh_s // 2), (bx, cy_ic - bh_s // 2)], fill=(*acc_rgb, 255) if playing else (203, 213, 225, 215), width=max(2, int(2 * scale)))
 
     def _render(self, force=False):
         if not self.window or not self.canvas:
             return
-        style = self.config_mgr.get("general", "media_capsule_style", "cristal") or "cristal"
+        w, h, scale, btn_pos = self._compute_dims()
+        style = (self.config_mgr.get("general", "media_capsule_style", "cristal") or "cristal").lower()
+        opacity = max(0.15, min(1.0, float(self.config_mgr.get("general", "media_capsule_opacity", 0.90) or 0.90)))
+        bg_custom = (self.config_mgr.get("general", "media_capsule_bg_color", "") or "").strip()
+        acc_custom = (self.config_mgr.get("general", "media_capsule_accent_color", "") or "").strip()
+        font_fam = self.config_mgr.get("general", "media_capsule_font_family", "Segoe UI") or "Segoe UI"
+        font_sz = max(9, min(18, int(self.config_mgr.get("general", "media_capsule_font_size", 11) or 11)))
+        title_hex = self.config_mgr.get("general", "media_capsule_title_color", "#f8fafc") or "#f8fafc"
+        artist_hex = self.config_mgr.get("general", "media_capsule_artist_color", "#94a3b8") or "#94a3b8"
+
         st = self.media_state
-        sig = (style, st["active"], st["title"], st["artist"], st["playing"], self.hovered_btn)
+        sig = (
+            w, h, style, round(opacity, 2), bg_custom, acc_custom, font_fam, font_sz,
+            title_hex, artist_hex, btn_pos, st["active"], st["title"], st["artist"], st["playing"], self.hovered_btn,
+        )
         if not force and sig == self._last_render_sig:
             return
         self._last_render_sig = sig
 
-        w, h = self.WIDTH, self.HEIGHT
         composite = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(composite, "RGBA")
 
         styles = {
-            "cristal": ((18, 22, 32, 232), (255, 255, 255, 52), (56, 189, 248)),
-            "neon": ((9, 13, 24, 244), (34, 211, 238, 210), (34, 211, 238)),
-            "minimal": ((16, 19, 27, 175), (255, 255, 255, 28), (226, 232, 240)),
-            "oled": ((4, 5, 8, 250), (168, 85, 247, 165), (168, 85, 247)),
-            "acrilico": ((17, 27, 48, 235), (96, 165, 250, 120), (96, 165, 250)),
+            "cristal": ((18, 22, 32), (255, 255, 255, 58), (0, 120, 212)),
+            "neon": ((9, 13, 24), (34, 211, 238, 220), (34, 211, 238)),
+            "minimal": ((16, 19, 27), (255, 255, 255, 34), (226, 232, 240)),
+            "oled": ((4, 5, 8), (168, 85, 247, 175), (168, 85, 247)),
+            "acrilico": ((17, 27, 48), (96, 165, 250, 135), (96, 165, 250)),
+            "editorial": ((26, 22, 16), (245, 197, 66, 165), (245, 197, 66)),
         }
-        bg_rgba, out_rgba, acc_rgb = styles.get(style, styles["cristal"])
-        draw.rounded_rectangle([2, 2, w - 3, h - 3], radius=(h - 4) // 2, fill=bg_rgba, outline=out_rgba, width=2 if style == "neon" else 1)
+        base_bg_rgb, out_rgba, base_acc_rgb = styles.get(style, styles["cristal"])
+        bg_rgb = _hex_to_rgb(bg_custom, base_bg_rgb) if bg_custom else base_bg_rgb
+        acc_rgb = _hex_to_rgb(acc_custom, base_acc_rgb) if acc_custom else base_acc_rgb
+        if acc_custom and style in ("neon", "oled", "editorial"):
+            out_rgba = (*acc_rgb, out_rgba[3])
+        bg_rgba = (*bg_rgb, max(20, int(255 * opacity)))
+        rad = min(28, (h - 4) // 2) if btn_pos == "center" else (h - 4) // 2
+        draw.rounded_rectangle([2, 2, w - 3, h - 3], radius=rad, fill=bg_rgba, outline=out_rgba, width=2 if style == "neon" else 1)
 
-        # Left audio/disc indicator
-        cx_ic, cy_ic = 23, h // 2
-        alpha_ellipse(composite, [cx_ic - 11, cy_ic - 11, cx_ic + 11, cy_ic + 11], fill=(*acc_rgb, 48), outline=(*acc_rgb, 185), width=1)
-        # Mini equalizer bars (outline/crisp)
-        heights = (9, 13, 7) if st["playing"] else (5, 8, 5)
-        for idx_b, bh in enumerate(heights):
-            bx = cx_ic - 4 + idx_b * 4
-            draw.line([(bx, cy_ic + bh // 2), (bx, cy_ic - bh // 2)], fill=(*acc_rgb, 255) if st["playing"] else (203, 213, 225, 210), width=2)
+        f_title = resolve_styled_font(font_fam, max(9, int(font_sz * scale)), bold=True)
+        f_sub = resolve_styled_font(font_fam, max(8, int((font_sz - 1.5) * scale)), bold=False)
+        title_rgb = _hex_to_rgb(title_hex, (248, 250, 252))
+        artist_rgb = _hex_to_rgb(artist_hex, (148, 163, 184))
 
-        # Track title + artist
-        f_title = resolve_styled_font("Segoe UI", 11, bold=True)
-        f_sub = resolve_styled_font("Segoe UI", 9.5, bold=False)
-        txt_x = 42
-        max_txt_w = w - 42 - 114
-        title = st["title"]
-        while title and draw.textlength(title, font=f_title) > max_txt_w:
-            title = title[:-1]
-        if title != st["title"]:
-            title = title.rstrip() + "…"
-        artist = st["artist"]
-        while artist and draw.textlength(artist, font=f_sub) > max_txt_w:
-            artist = artist[:-1]
-        if artist != st["artist"]:
-            artist = artist.rstrip() + "…"
+        def _clip(text, font, max_w):
+            out = text
+            while out and draw.textlength(out, font=font) > max(24, max_w):
+                out = out[:-1]
+            return (out.rstrip() + "…") if out != text else out
 
-        draw.text((txt_x, h // 2 - 7), title, fill=(248, 250, 252, 255), font=f_title, anchor="lm")
-        draw.text((txt_x, h // 2 + 8), artist, fill=(148, 163, 184, 230), font=f_sub, anchor="lm")
-
-        # Right playback controls: [Prev] [Play/Pause] [Next]
         self.btn_boxes = []
-        btn_specs = [("prev", w - 98), ("play_pause", w - 66), ("next", w - 34)]
-        for act, bcx in btn_specs:
-            r = 14 if act == "play_pause" else 12
-            bcy = h // 2
-            box = (bcx - r, bcy - r, bcx + r, bcy + r)
-            self.btn_boxes.append((*box, act))
-            is_hov = (self.hovered_btn == act)
-            if act == "play_pause":
-                fill_b = (*acc_rgb, 230 if is_hov else 175)
-                alpha_ellipse(composite, list(box), fill=fill_b, outline=(255, 255, 255, 190 if is_hov else 110), width=1)
-                if st["playing"]:
-                    draw.rectangle([bcx - 4, bcy - 5, bcx - 1, bcy + 5], fill=(255, 255, 255, 255))
-                    draw.rectangle([bcx + 2, bcy - 5, bcx + 5, bcy + 5], fill=(255, 255, 255, 255))
-                else:
-                    draw.polygon([(bcx - 3, bcy - 6), (bcx - 3, bcy + 6), (bcx + 6, bcy)], fill=(255, 255, 255, 255))
-            else:
-                if is_hov:
-                    alpha_ellipse(composite, list(box), fill=(255, 255, 255, 36))
-                col_i = (255, 255, 255, 255) if is_hov else (203, 213, 225, 235)
-                if act == "prev":
-                    draw.line([(bcx - 5, bcy - 5), (bcx - 5, bcy + 5)], fill=col_i, width=2)
-                    draw.polygon([(bcx + 5, bcy - 5), (bcx + 5, bcy + 5), (bcx - 3, bcy)], fill=col_i)
-                else:
-                    draw.polygon([(bcx - 5, bcy - 5), (bcx - 5, bcy + 5), (bcx + 3, bcy)], fill=col_i)
-                    draw.line([(bcx + 5, bcy - 5), (bcx + 5, bcy + 5)], fill=col_i, width=2)
+        btn_gap = int(32 * scale)
+
+        if btn_pos == "left":
+            b1 = int(26 * scale)
+            self._draw_ctrl_btn(composite, draw, "prev", b1, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "play_pause", b1 + btn_gap, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "next", b1 + btn_gap * 2, h // 2, scale, acc_rgb, st["playing"])
+            eq_x = w - int(24 * scale)
+            self._draw_eq_badge(composite, draw, eq_x, h // 2, scale, acc_rgb, st["playing"])
+            txt_x = b1 + btn_gap * 2 + int(22 * scale)
+            max_tw = eq_x - int(18 * scale) - txt_x
+            draw.text((txt_x, h // 2 - int(7 * scale)), _clip(st["title"], f_title, max_tw), fill=(*title_rgb, 255), font=f_title, anchor="lm")
+            draw.text((txt_x, h // 2 + int(8 * scale)), _clip(st["artist"], f_sub, max_tw), fill=(*artist_rgb, 235), font=f_sub, anchor="lm")
+
+        elif btn_pos == "center":
+            top_y = int(15 * scale)
+            max_tw = w - int(36 * scale)
+            draw.text((w / 2.0, top_y), _clip(st["title"], f_title, max_tw), fill=(*title_rgb, 255), font=f_title, anchor="mm")
+            draw.text((w / 2.0, top_y + int(13 * scale)), _clip(st["artist"], f_sub, max_tw), fill=(*artist_rgb, 235), font=f_sub, anchor="mm")
+            by = h - int(18 * scale)
+            self._draw_ctrl_btn(composite, draw, "prev", w // 2 - int(38 * scale), by, scale * 0.92, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "play_pause", w // 2, by, scale * 0.92, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "next", w // 2 + int(38 * scale), by, scale * 0.92, acc_rgb, st["playing"])
+
+        elif btn_pos == "split":
+            lx = int(24 * scale)
+            rx = w - int(24 * scale)
+            px = w - int(56 * scale)
+            self._draw_ctrl_btn(composite, draw, "prev", lx, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "play_pause", px, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "next", rx, h // 2, scale, acc_rgb, st["playing"])
+            txt_x1 = lx + int(20 * scale)
+            txt_x2 = px - int(20 * scale)
+            tcx = (txt_x1 + txt_x2) / 2.0
+            max_tw = txt_x2 - txt_x1
+            draw.text((tcx, h // 2 - int(7 * scale)), _clip(st["title"], f_title, max_tw), fill=(*title_rgb, 255), font=f_title, anchor="mm")
+            draw.text((tcx, h // 2 + int(8 * scale)), _clip(st["artist"], f_sub, max_tw), fill=(*artist_rgb, 235), font=f_sub, anchor="mm")
+
+        else:
+            # Default: "right"
+            cx_ic = int(24 * scale)
+            self._draw_eq_badge(composite, draw, cx_ic, h // 2, scale, acc_rgb, st["playing"])
+            b3 = w - int(26 * scale)
+            b2 = b3 - btn_gap
+            b1 = b2 - btn_gap
+            self._draw_ctrl_btn(composite, draw, "prev", b1, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "play_pause", b2, h // 2, scale, acc_rgb, st["playing"])
+            self._draw_ctrl_btn(composite, draw, "next", b3, h // 2, scale, acc_rgb, st["playing"])
+            txt_x = cx_ic + int(20 * scale)
+            max_tw = b1 - int(18 * scale) - txt_x
+            draw.text((txt_x, h // 2 - int(7 * scale)), _clip(st["title"], f_title, max_tw), fill=(*title_rgb, 255), font=f_title, anchor="lm")
+            draw.text((txt_x, h // 2 + int(8 * scale)), _clip(st["artist"], f_sub, max_tw), fill=(*artist_rgb, 235), font=f_sub, anchor="lm")
 
         self.window.update_idletasks()
         hwnd = self.top_hwnd or user32.GetAncestor(self.window.winfo_id(), 2) or self.window.winfo_id()
