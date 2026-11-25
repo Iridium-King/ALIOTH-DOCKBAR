@@ -265,6 +265,22 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(ex)}, 500)
             return
 
+        elif path == "/api/themes":
+            try:
+                import themes
+                self._send_json(themes.get_themes_payload(_config_mgr_ref))
+            except Exception as ex:
+                self._send_json({"error": str(ex)}, 500)
+            return
+
+        elif path == "/api/battery_status":
+            try:
+                from window_utils import get_battery_status
+                self._send_json(get_battery_status())
+            except Exception as ex:
+                self._send_json({"error": str(ex)}, 500)
+            return
+
         elif path == "/api/panel_events":
             token = qs.get("token", [""])[0]
             ev = threading.Event()
@@ -472,12 +488,26 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             if _config_mgr_ref:
                 for section, vals in payload.items():
-                    if isinstance(vals, dict):
-                        if section not in _config_mgr_ref.data:
+                    if section == "widgets" and isinstance(vals, dict):
+                        if "widgets" not in _config_mgr_ref.data or not isinstance(_config_mgr_ref.data["widgets"], dict):
+                            _config_mgr_ref.data["widgets"] = {}
+                        for w_id, w_vals in vals.items():
+                            if isinstance(w_vals, dict):
+                                if w_id not in _config_mgr_ref.data["widgets"] or not isinstance(_config_mgr_ref.data["widgets"][w_id], dict):
+                                    _config_mgr_ref.data["widgets"][w_id] = {}
+                                _config_mgr_ref.data["widgets"][w_id].update(w_vals)
+                                _config_mgr_ref.mark_dirty("widgets", w_id)
+                            else:
+                                _config_mgr_ref.data["widgets"][w_id] = w_vals
+                                _config_mgr_ref.mark_dirty("widgets")
+                    elif isinstance(vals, dict):
+                        if section not in _config_mgr_ref.data or not isinstance(_config_mgr_ref.data[section], dict):
                             _config_mgr_ref.data[section] = {}
                         _config_mgr_ref.data[section].update(vals)
+                        _config_mgr_ref.mark_dirty(section)
                     else:
                         _config_mgr_ref.data[section] = vals
+                        _config_mgr_ref.mark_dirty(section)
                 _config_mgr_ref.save()
                 if "general" in payload and isinstance(payload["general"], dict) and "start_with_windows" in payload["general"]:
                     _config_mgr_ref.update_startup_shortcut(payload["general"]["start_with_windows"])
@@ -806,6 +836,49 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 self._send_json(res)
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/apply_theme":
+            try:
+                import themes
+                res = themes.apply_theme(
+                    _config_mgr_ref,
+                    payload.get("theme_id", ""),
+                    apply_icons=bool(payload.get("apply_icons", True)),
+                )
+                if _on_applied_ref and res.get("ok"):
+                    _on_applied_ref()
+                self._send_json(res, 200 if res.get("ok") else 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/save_custom_theme":
+            try:
+                import themes
+                res = themes.save_custom_theme(_config_mgr_ref, payload.get("name", ""))
+                self._send_json(res, 200 if res.get("ok") else 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/delete_custom_theme":
+            try:
+                import themes
+                res = themes.delete_custom_theme(_config_mgr_ref, payload.get("theme_id", ""))
+                self._send_json(res, 200 if res.get("ok") else 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/add_battery_dock":
+            if _config_mgr_ref:
+                _config_mgr_ref.add_item({"type": "battery", "name": payload.get("name") or "Batería"})
+                if _on_applied_ref:
+                    _on_applied_ref()
+                self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+            else:
+                self._send_json({"error": "No config manager"}, 500)
             return
 
         self.send_error(404, "Unknown API endpoint")

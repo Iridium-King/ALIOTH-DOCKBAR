@@ -693,6 +693,25 @@ def create_action_icon(action_type, size=128):
             (int(84 * scale), my + int(12 * scale)),
         ], fill=(255, 255, 255, 255))
 
+    elif action_type == "app_launcher":
+        # macOS Launchpad / App Drawer 3x3 colorful rounded tiles on dark slate
+        draw.rounded_rectangle(card_rect, radius=radius, fill=(22, 28, 45, 248), outline=(96, 165, 250, 215), width=max(1, int(2.5 * scale)))
+        tile_colors = [
+            (239, 68, 68, 255), (59, 130, 246, 255), (16, 185, 129, 255),
+            (245, 158, 11, 255), (168, 85, 247, 255), (6, 182, 212, 255),
+            (236, 72, 153, 255), (99, 102, 241, 255), (52, 211, 153, 255),
+        ]
+        tw = max(4, int(18 * scale))
+        gap = max(3, int(8 * scale))
+        start = int(64 * scale) - (tw * 3 + gap * 2) // 2
+        idx_t = 0
+        for r in range(3):
+            for c in range(3):
+                tx1 = start + c * (tw + gap)
+                ty1 = start + r * (tw + gap)
+                draw.rounded_rectangle([tx1, ty1, tx1 + tw, ty1 + tw], radius=max(2, int(5 * scale)), fill=tile_colors[idx_t])
+                idx_t += 1
+
     else:
         draw.rounded_rectangle(card_rect, radius=radius, fill=(30, 41, 59, 240), outline=(59, 130, 246, 200), width=max(1, int(2 * scale)))
         pts = [

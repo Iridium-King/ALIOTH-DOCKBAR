@@ -3,7 +3,9 @@ import sys
 import time
 import json
 import uuid
+import copy
 import winreg
+import ctypes
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 STARTUP_LINK_NAME = "AliothDockbar.lnk"
@@ -17,7 +19,10 @@ DEFAULT_CONFIG = {
         "edge_trigger_thickness": 4,         # Pixels near edge to activate
         "start_with_windows": False,         # Startup shortcut
         "locked": False,                     # Lock icons from dragging/removing
-        "show_open_windows": False           # Show unpinned open apps on the right side of the dock
+        "show_open_windows": False,          # Show unpinned open apps on the right side of the dock
+        "launcher_mode": "custom",           # "custom" (macOS-style app drawer) or "windows" (Win Key)
+        "media_capsule_enabled": False,      # Centered media player capsule above Dockbar
+        "media_capsule_style": "cristal"     # "cristal", "neon", "minimal", "oled", "acrilico"
     },
     "appearance": {
         "edge_offset": 6,                    # Distance between dock and screen edge (0 to 60px)
@@ -31,9 +36,11 @@ DEFAULT_CONFIG = {
         "round_all_corners": True,           # Round bottom corners even at 0px edge offset
         "bg_color": "#181a20",               # Dock background color (Hex)
         "bg_opacity": 0.82,                  # Background opacity (0.1 to 1.0)
-        "border_color": "#ffffff",           # Subtle border
-        "border_opacity": 0.18,              # Border opacity
-        "border_width": 1,
+        "border_enabled": True,              # Enable Dockbar border
+        "border_color": "#ffffff",           # Border color (Hex)
+        "border_opacity": 0.24,              # Border opacity
+        "border_width": 1,                   # Border thickness (1 to 6 px)
+        "border_style": "solid",             # "solid", "dashed", "dotted", "double", "neon"
         "show_labels": True,                 # Floating tooltip label
         "label_bg": "#121318",
         "label_fg": "#ffffff",
@@ -49,12 +56,18 @@ DEFAULT_CONFIG = {
         "folder_label_italic": False,
         "folder_label_fg": "#dae2ee",
         "separator_color": "#ffffff",
-        "separator_opacity": 0.25,
+        "separator_opacity": 0.35,
+        "separator_width": 2,
+        "separator_style": "solid",          # "solid", "dashed", "dotted", "double", "glow"
         "bounce_on_launch": True,            # Legacy compatibility switch
-        "launch_effect": "gota_energia",     # "gota_energia", "rebote", "gota_rebote", "pulso_neon", "levitacion", "pop_elastico", "ninguno"
+        "launch_effect": "gota_energia",     # "gota_energia", "gota_rebote", "pulso_neon", "levitacion", "pop_elastico", "rebote", "ninguno"
         "launch_effect_speed": 1.0,          # Speed multiplier (0.4x slow to 2.5x fast)
         "launch_effect_color": "#38bdf8",    # Electric water/energy blue default
-        "show_running_indicators": True      # Glowing dot indicator underneath running apps
+        "show_running_indicators": True,     # Open apps indicator underneath running apps
+        "indicator_style": "dot",            # "dot", "pill", "line", "ring", "diamond"
+        "indicator_color": "#60a5fa",
+        "indicator_size": 6,                 # Base indicator size (3 to 12 px)
+        "dock_battery_style": "ring"         # "ring", "bar", "pill", "minimal"
     },
     "widgets": {
         "clock": {
@@ -76,6 +89,15 @@ DEFAULT_CONFIG = {
             "y": 170,
             "opacity": 0.88,
             "update_interval_sec": 2,
+            "pinned_to_desktop": True
+        },
+        "battery": {
+            "enabled": False,
+            "x": 24,
+            "y": 585,
+            "battery_style": "anillo",       # "anillo", "barra", "neon", "pildora"
+            "accent_color": "#38bdf8",
+            "opacity": 0.88,
             "pinned_to_desktop": True
         },
         "desktop_minidock": {
@@ -121,6 +143,8 @@ DEFAULT_CONFIG = {
             ]
         }
     },
+    "active_theme": "",
+    "saved_themes": {},
     "panel_bounds": {
         "width": 980,
         "height": 780,
@@ -130,34 +154,69 @@ DEFAULT_CONFIG = {
     "items": []
 }
 
+class _ConfigFileMutex:
+    """Shared inter-process Win32 Mutex so Dockbar, Widgets, CLI & MCP never clobber config.json."""
+    def __init__(self, name="Local\\AliothTodoStore_Mutex"):
+        self.name = name
+        self.handle = None
+
+    def __enter__(self):
+        try:
+            k32 = ctypes.windll.kernel32
+            h = k32.CreateMutexW(None, False, self.name)
+            if h:
+                k32.WaitForSingleObject(h, 4000)
+                self.handle = h
+        except Exception:
+            self.handle = None
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.handle:
+            try:
+                k32 = ctypes.windll.kernel32
+                k32.ReleaseMutex(self.handle)
+                k32.CloseHandle(self.handle)
+            except Exception:
+                pass
+            self.handle = None
+
+
+def _deep_merge_defaults(target, defaults):
+    if not isinstance(target, dict) or not isinstance(defaults, dict):
+        return target
+    for k, v in defaults.items():
+        if k not in target:
+            target[k] = copy.deepcopy(v)
+        elif isinstance(v, dict) and isinstance(target[k], dict):
+            _deep_merge_defaults(target[k], v)
+    return target
+
+
 class ConfigManager:
     def __init__(self, config_path=DEFAULT_CONFIG_PATH):
         self.config_path = config_path
+        self._dirty_sections = set()
+        self._dirty_widgets = set()
         self.data = self.load()
 
     def load(self):
         if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    # Merge defaults for any missing keys
-                    for section, values in DEFAULT_CONFIG.items():
-                        if isinstance(values, dict):
-                            if section not in data:
-                                data[section] = values.copy()
-                            else:
-                                for k, v in values.items():
-                                    if k not in data[section]:
-                                        data[section][k] = v
-                        elif section not in data:
-                            data[section] = values
-                    return data
-            except Exception as e:
-                print(f"[ConfigManager] Error reading config: {e}. Using defaults.")
-        
+            with _ConfigFileMutex():
+                try:
+                    with open(self.config_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        _deep_merge_defaults(data, DEFAULT_CONFIG)
+                        return data
+                except Exception as e:
+                    print(f"[ConfigManager] Error reading config: {e}. Using defaults.")
+
         # Initial creation with default sample items
-        initial = json.loads(json.dumps(DEFAULT_CONFIG))
+        initial = copy.deepcopy(DEFAULT_CONFIG)
         initial["items"] = self._get_initial_items()
+        self.data = initial
+        self._dirty_sections = set(initial.keys())
         self.save(initial)
         return initial
 
@@ -201,28 +260,59 @@ class ConfigManager:
         if data is not None:
             self.data = data
         tmp_path = f"{self.config_path}.{os.getpid()}.tmp"
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4, ensure_ascii=False)
-                f.flush()
-            last_err = None
-            for attempt in range(5):
-                try:
-                    os.replace(tmp_path, self.config_path)
-                    last_err = None
-                    break
-                except (PermissionError, OSError) as err:
-                    last_err = err
-                    time.sleep(0.08 * (attempt + 1))
-            if last_err is not None:
-                raise last_err
-        except Exception as e:
-            print(f"[ConfigManager] Error saving config: {e}")
+        with _ConfigFileMutex():
             try:
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except Exception:
-                pass
+                # Re-read disk state and merge only sections/widgets modified in this process,
+                # so Dockbar and Widgets processes NEVER overwrite each other's settings or positions!
+                merged = copy.deepcopy(self.data)
+                if os.path.exists(self.config_path):
+                    try:
+                        with open(self.config_path, "r", encoding="utf-8") as rf:
+                            disk_data = json.load(rf)
+                        if isinstance(disk_data, dict):
+                            dirty_secs = getattr(self, "_dirty_sections", set())
+                            dirty_wids = getattr(self, "_dirty_widgets", set())
+                            if dirty_secs or dirty_wids:
+                                merged = copy.deepcopy(disk_data)
+                                for sec in dirty_secs:
+                                    if sec == "widgets" and dirty_wids:
+                                        continue
+                                    if sec in self.data:
+                                        merged[sec] = copy.deepcopy(self.data[sec])
+                                if dirty_wids:
+                                    w_disk = merged.setdefault("widgets", {})
+                                    w_mem = self.data.get("widgets", {})
+                                    for wid in dirty_wids:
+                                        if wid in w_mem:
+                                            w_disk[wid] = copy.deepcopy(w_mem[wid])
+                                self.data = copy.deepcopy(merged)
+                    except Exception:
+                        pass
+
+                _deep_merge_defaults(merged, DEFAULT_CONFIG)
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(merged, f, indent=4, ensure_ascii=False)
+                    f.flush()
+                last_err = None
+                for attempt in range(6):
+                    try:
+                        os.replace(tmp_path, self.config_path)
+                        last_err = None
+                        break
+                    except (PermissionError, OSError) as err:
+                        last_err = err
+                        time.sleep(0.08 * (attempt + 1))
+                if last_err is not None:
+                    raise last_err
+                self._dirty_sections.clear()
+                self._dirty_widgets.clear()
+            except Exception as e:
+                print(f"[ConfigManager] Error saving config: {e}")
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
 
     def get(self, section, key, default=None):
         return self.data.get(section, {}).get(key, default)
@@ -231,6 +321,7 @@ class ConfigManager:
         if section not in self.data:
             self.data[section] = {}
         self.data[section][key] = value
+        self._dirty_sections.add(section)
         self.save()
 
     def get_widget(self, name, key, default=None):
@@ -242,6 +333,7 @@ class ConfigManager:
         if name not in self.data["widgets"]:
             self.data["widgets"][name] = {}
         self.data["widgets"][name][key] = value
+        self._dirty_widgets.add(name)
         self.save()
 
     def get_items(self):
@@ -249,6 +341,7 @@ class ConfigManager:
 
     def set_items(self, items):
         self.data["items"] = items
+        self._dirty_sections.add("items")
         self.save()
 
     def add_item(self, item_dict, index=None):

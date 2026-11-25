@@ -16,6 +16,7 @@ from window_utils import (
     set_tool_window, update_layered_pil, release_layered_surface,
     flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse,
     alpha_line, resolve_styled_font, find_lowest_app_above_desktop,
+    get_battery_status,
 )
 
 user32 = ctypes.windll.user32
@@ -222,8 +223,13 @@ class BaseDesktopWidget:
 
         self.is_dragging = False
         self.is_resizing = False
+        self.resize_dir = None
+        self._hover_resize_dir = None
+        self._cur_cursor = ""
         self.drag_start_x = 0
         self.drag_start_y = 0
+        self.resize_start_x = 0
+        self.resize_start_y = 0
         self.resize_start_w = 0
         self.resize_start_h = 0
         self.resize_origin_x = 0
@@ -505,9 +511,7 @@ class BaseDesktopWidget:
             self._collapse_job = None
         if not self._hover_inside:
             self._hover_inside = True
-            if bool(self.get_cfg("auto_collapse", False)) and not bool(self.get_cfg("minimized", False)):
-                self._redraw_now()
-            elif self.widget_id == "clock":
+            if (bool(self.get_cfg("auto_collapse", False)) and not bool(self.get_cfg("minimized", False))) or self.widget_id == "clock" or not bool(self.get_cfg("lock_position", False)):
                 self._redraw_now()
 
     def _on_base_leave(self, _event=None):
@@ -516,7 +520,7 @@ class BaseDesktopWidget:
                 self.root.after_cancel(self._collapse_job)
             except Exception:
                 pass
-        self._collapse_job = self.root.after(380, self._deferred_leave_check)
+        self._collapse_job = self.root.after(260, self._deferred_leave_check)
 
     def _deferred_leave_check(self):
         self._collapse_job = None
@@ -527,12 +531,15 @@ class BaseDesktopWidget:
         wx, wy = self.window.winfo_rootx(), self.window.winfo_rooty()
         if wx <= pt.x <= wx + self.win_w and wy <= pt.y <= wy + self.win_h:
             return
+        changed_hl = self._hover_resize_dir is not None
+        self._hover_resize_dir = None
+        self._set_cursor("")
         if self._hover_inside:
             self._hover_inside = False
-            if bool(self.get_cfg("auto_collapse", False)) and not bool(self.get_cfg("minimized", False)):
+            if (bool(self.get_cfg("auto_collapse", False)) and not bool(self.get_cfg("minimized", False))) or self.widget_id == "clock" or not bool(self.get_cfg("lock_position", False)):
                 self._redraw_now()
-            elif self.widget_id == "clock":
-                self._redraw_now()
+        elif changed_hl:
+            self._redraw_now()
 
     def is_enabled(self):
         return bool(self.get_cfg("enabled", True))
@@ -574,6 +581,7 @@ class BaseDesktopWidget:
         self.canvas.bind("<B1-Motion>", self._on_drag_move)
         self.canvas.bind("<ButtonRelease-1>", self._on_drag_end)
         self.canvas.bind("<Button-3>", self._on_context_menu)
+        self.canvas.bind("<Motion>", self._on_base_motion, add="+")
         self.canvas.bind("<Enter>", self._on_base_enter, add="+")
         self.canvas.bind("<Leave>", self._on_base_leave, add="+")
 
@@ -647,11 +655,87 @@ class BaseDesktopWidget:
         except Exception:
             pass
 
-    def _is_in_resize_zone(self, x, y):
+    _RESIZE_CURSORS = {
+        "nw": "size_nw_se",
+        "se": "size_nw_se",
+        "ne": "size_ne_sw",
+        "sw": "size_ne_sw",
+        "n": "sb_v_double_arrow",
+        "s": "sb_v_double_arrow",
+        "e": "sb_h_double_arrow",
+        "w": "sb_h_double_arrow",
+    }
+
+    def _set_cursor(self, cursor_name):
+        if self.canvas and self._cur_cursor != cursor_name:
+            try:
+                self.canvas.config(cursor=cursor_name)
+                self._cur_cursor = cursor_name
+            except Exception:
+                pass
+
+    def _detect_resize_dir(self, x, y):
+        """Returns 8-point resize direction ('nw','n','ne','e','se','s','sw','w') or None."""
         if bool(self.get_cfg("lock_position", False)) or self._is_collapsed_view():
-            return False
-        grip = int(18 * self.dpi_scale)
-        return (x >= self.win_w - grip) and (y >= self.win_h - grip)
+            return None
+        if self._hit_min_button(x, y):
+            return None
+        w, h = self.win_w, self.win_h
+        if w < 60 or h < 36:
+            return None
+        c_hit = max(12, int(14 * self.dpi_scale))
+        e_hit = max(7, int(9 * self.dpi_scale))
+
+        # Check explicit 8 handle positions first (corners + midpoints) for crisp magnetic grab
+        handles = {
+            "nw": (6, 6),
+            "n": (w // 2, 6),
+            "ne": (w - 7, 6),
+            "e": (w - 7, h // 2),
+            "se": (w - 7, h - 7),
+            "s": (w // 2, h - 7),
+            "sw": (6, h - 7),
+            "w": (6, h // 2),
+        }
+        for d, (hx, hy) in handles.items():
+            if abs(x - hx) <= c_hit and abs(y - hy) <= c_hit:
+                return d
+
+        # Also support entire outer edge perimeter
+        on_l = x <= e_hit
+        on_r = x >= w - e_hit
+        on_t = y <= e_hit
+        on_b = y >= h - e_hit
+        if on_t and on_l:
+            return "nw"
+        if on_t and on_r:
+            return "ne"
+        if on_b and on_l:
+            return "sw"
+        if on_b and on_r:
+            return "se"
+        if on_t:
+            return "n"
+        if on_b:
+            return "s"
+        if on_l:
+            return "w"
+        if on_r:
+            return "e"
+        return None
+
+    def _on_base_motion(self, event):
+        if self.is_resizing or self.is_dragging:
+            return
+        rdir = self._detect_resize_dir(event.x, event.y)
+        self._set_cursor(self._RESIZE_CURSORS.get(rdir, "") if rdir else "")
+        if rdir != self._hover_resize_dir:
+            self._hover_resize_dir = rdir
+            if not bool(self.get_cfg("lock_position", False)) and not self._is_collapsed_view():
+                self._redraw_now()
+
+    def _is_in_resize_zone(self, x, y):
+        return self._detect_resize_dir(x, y) is not None
 
     def _hit_min_button(self, x, y):
         mb = self.min_btn_rect
@@ -663,38 +747,77 @@ class BaseDesktopWidget:
             return
         if bool(self.get_cfg("lock_position", False)):
             self.is_resizing = False
+            self.resize_dir = None
             self.is_dragging = False
             return
-        if self._is_in_resize_zone(event.x, event.y):
+        rdir = self._detect_resize_dir(event.x, event.y)
+        if rdir:
             self.is_resizing = True
+            self.resize_dir = rdir
             self.is_dragging = False
+            self.resize_start_x = self.window.winfo_x() if self.window else int(self.get_cfg("x", self.default_x))
+            self.resize_start_y = self.window.winfo_y() if self.window else int(self.get_cfg("y", self.default_y))
             self.resize_start_w = self.win_w
             self.resize_start_h = self.win_h
             self.resize_origin_x = event.x_root
             self.resize_origin_y = event.y_root
             return
         self.is_resizing = False
+        self.resize_dir = None
         self.is_dragging = True
         self.drag_start_x = event.x
         self.drag_start_y = event.y
 
     def _on_drag_move(self, event):
         if self.is_resizing and self.window and self.window.winfo_exists():
-            new_w = max(self._min_w(), min(960, int(self.resize_start_w + (event.x_root - self.resize_origin_x))))
-            new_h = max(self._min_h(), min(720, int(self.resize_start_h + (event.y_root - self.resize_origin_y))))
-            if new_w != self.win_w or new_h != self.win_h:
+            rdir = self.resize_dir or "se"
+            dx = event.x_root - self.resize_origin_x
+            dy = event.y_root - self.resize_origin_y
+            min_w, max_w = self._min_w(), 960
+            min_h, max_h = self._min_h(), 720
+
+            new_x = self.resize_start_x
+            new_y = self.resize_start_y
+            new_w = self.resize_start_w
+            new_h = self.resize_start_h
+
+            if "e" in rdir:
+                new_w = max(min_w, min(max_w, int(self.resize_start_w + dx)))
+            if "w" in rdir:
+                right_edge = self.resize_start_x + self.resize_start_w
+                cand_w = max(min_w, min(max_w, int(self.resize_start_w - dx)))
+                new_w = cand_w
+                new_x = right_edge - new_w
+            if "s" in rdir:
+                new_h = max(min_h, min(max_h, int(self.resize_start_h + dy)))
+            if "n" in rdir:
+                bottom_edge = self.resize_start_y + self.resize_start_h
+                cand_h = max(min_h, min(max_h, int(self.resize_start_h - dy)))
+                new_h = cand_h
+                new_y = bottom_edge - new_h
+
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+            new_x = max(0, min(sw - new_w, int(new_x)))
+            new_y = max(32, min(sh - new_h, int(new_y)))
+
+            if (new_w != self.win_w or new_h != self.win_h
+                    or new_x != self.window.winfo_x() or new_y != self.window.winfo_y()):
                 self.win_w = new_w
                 self.win_h = new_h
-                x = self.window.winfo_x()
-                y = self.window.winfo_y()
-                self.window.geometry(f"{new_w}x{new_h}+{x}+{y}")
+                self.window.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
+                if self.top_hwnd:
+                    user32.SetWindowPos(
+                        self.top_hwnd, 0, int(new_x), int(new_y), int(new_w), int(new_h),
+                        SWP_NOZORDER | SWP_NOACTIVATE
+                    )
                 if self.canvas:
                     self.canvas.config(width=new_w, height=new_h)
                 now_t = time.time()
-                if now_t - self._last_resize_draw >= 0.03:
+                if now_t - self._last_resize_draw >= 0.028:
                     self._last_resize_draw = now_t
                     if hasattr(self, "_update_clock"):
-                        self._update_clock()
+                        self._update_clock(force_draw=True)
                     elif hasattr(self, "_update_stats"):
                         self._update_stats()
                     elif hasattr(self, "_render"):
@@ -715,8 +838,12 @@ class BaseDesktopWidget:
 
     def _finish_resize(self):
         self.is_resizing = False
+        self.resize_dir = None
         self.set_cfg("custom_w", int(self.win_w))
         self.set_cfg("custom_h", int(self.win_h))
+        if self.window and self.window.winfo_exists():
+            self.set_cfg("x", int(self.window.winfo_x()))
+            self.set_cfg("y", int(self.window.winfo_y()))
         if self.widget_id == "todo_list":
             self.set_cfg("auto_grow", False)
         self._apply_z_order()
@@ -745,11 +872,21 @@ class BaseDesktopWidget:
         """Renders true 32-bit per-pixel alpha layered glass card directly to screen."""
         if not self.window or not self.window.winfo_exists():
             return
-        # Draw subtle bottom-right resize corner grip indicator when unlocked & expanded
+        # Draw 8-point resize handle dots directly on widget when hovered/resizing & unlocked
         if w >= 100 and h >= 48 and not bool(self.get_cfg("lock_position", False)) and not self._is_collapsed_view():
-            c_rgba = (255, 255, 255, 115) if self.is_resizing else (148, 163, 184, 95)
-            alpha_line(composite, [(w - 13, h - 5), (w - 5, h - 13)], fill=c_rgba, width=1)
-            alpha_line(composite, [(w - 8, h - 5), (w - 5, h - 8)], fill=c_rgba, width=1)
+            if self._hover_inside or self.is_resizing:
+                active_d = self.resize_dir or self._hover_resize_dir
+                handles = [
+                    ("nw", 6, 6), ("n", w // 2, 6), ("ne", w - 7, 6),
+                    ("e", w - 7, h // 2), ("se", w - 7, h - 7),
+                    ("s", w // 2, h - 7), ("sw", 6, h - 7), ("w", 6, h // 2),
+                ]
+                for d, hx, hy in handles:
+                    is_act = (d == active_d)
+                    r = 4 if is_act else 3
+                    fill_c = (56, 189, 248, 248) if is_act else (241, 245, 249, 195)
+                    out_c = (15, 23, 42, 235)
+                    alpha_ellipse(composite, [hx - r, hy - r, hx + r, hy + r], fill=fill_c, outline=out_c, width=1)
         self.window.update_idletasks()
         x = self.window.winfo_x()
         y = self.window.winfo_y()
@@ -1247,8 +1384,8 @@ class TodoListWidget(BaseDesktopWidget):
         super().show()
         if self.canvas:
             self.canvas.bind("<Button-1>", self._on_canvas_click)
-            self.canvas.bind("<Motion>", self._on_motion)
-            self.canvas.bind("<Leave>", self._on_leave)
+            self.canvas.bind("<Motion>", self._on_motion, add="+")
+            self.canvas.bind("<Leave>", self._on_leave, add="+")
             self.canvas.bind("<MouseWheel>", self._on_mousewheel)
 
     def hide(self):
@@ -2232,8 +2369,8 @@ class QuickAccessWidget(BaseDesktopWidget):
     def show(self):
         super().show()
         if self.canvas:
-            self.canvas.bind("<Motion>", self._on_motion)
-            self.canvas.bind("<Leave>", self._on_leave)
+            self.canvas.bind("<Motion>", self._on_motion, add="+")
+            self.canvas.bind("<Leave>", self._on_leave, add="+")
             self._setup_drop()
 
     def _start_update_loop(self):
@@ -2607,8 +2744,8 @@ class PwaWidget(BaseDesktopWidget):
                 pass
         super().show()
         if self.canvas:
-            self.canvas.bind("<Motion>", self._on_motion)
-            self.canvas.bind("<Leave>", self._on_leave)
+            self.canvas.bind("<Motion>", self._on_motion, add="+")
+            self.canvas.bind("<Leave>", self._on_leave, add="+")
 
     def _start_update_loop(self):
         self._render()
@@ -2830,8 +2967,8 @@ class DesktopMiniDockWidget(BaseDesktopWidget):
         self._load_icons()
         super().show()
         if self.canvas:
-            self.canvas.bind("<Motion>", self._on_motion)
-            self.canvas.bind("<Leave>", self._on_leave)
+            self.canvas.bind("<Motion>", self._on_motion, add="+")
+            self.canvas.bind("<Leave>", self._on_leave, add="+")
 
     def _load_icons(self):
         import icon_extractor
@@ -2950,6 +3087,193 @@ class DesktopMiniDockWidget(BaseDesktopWidget):
         self._render_to_canvas(composite, w, h)
 
 
+class BatteryWidget(BaseDesktopWidget):
+    """Desktop Battery Telemetry Widget with 4 visual styles and ultra-low RAM polling."""
+    def __init__(self, root, config_mgr, on_open_settings=None):
+        super().__init__(root, config_mgr, "battery", default_x=320, default_y=50, default_w=230, default_h=96, on_open_settings=on_open_settings)
+        self._last_bat_sig = None
+
+    def _start_update_loop(self):
+        self._update_stats()
+
+    def _update_stats(self):
+        if not self.window or not self.window.winfo_exists():
+            return
+        self._render()
+        if self.update_job:
+            try:
+                self.root.after_cancel(self.update_job)
+            except Exception:
+                pass
+        self.update_job = self.root.after(4000, self._update_stats)
+
+    def _render(self):
+        if not self.window or not self.window.winfo_exists():
+            return
+        bat = get_battery_status()
+        has_bat = bat.get("has_battery", False)
+        pct = int(bat.get("percent", 100)) if has_bat else 100
+        charging = bool(bat.get("charging", False))
+        saver = bool(bat.get("saver", False))
+        life_min = bat.get("life_minutes")
+
+        style = (self.get_cfg("style", "anillo") or "anillo").lower()
+        accent_hex = self.get_cfg("accent_color", "") or ""
+        if accent_hex:
+            accent_rgb = _hex_to_rgb(accent_hex, (34, 197, 94))
+        else:
+            if pct <= 15 and not charging:
+                accent_rgb = (239, 68, 68)
+            elif pct <= 30 and not charging:
+                accent_rgb = (245, 158, 11)
+            elif charging:
+                accent_rgb = (56, 189, 248)
+            else:
+                accent_rgb = (34, 197, 94)
+
+        if self._is_collapsed_view():
+            st_txt = f"{pct}% {'⚡' if charging else ''}".strip() if has_bat else "AC"
+            self._render_collapsed_pill("Batería", st_txt, accent_rgb=accent_rgb)
+            return
+
+        if not self.is_resizing:
+            fw, fh = self._compute_full_dims()
+            self._set_window_size_live(fw, fh)
+
+        w, h = self.win_w, self.win_h
+        s = min(w / 230.0, h / 96.0) if self.get_cfg("custom_w") else self._get_effective_scale()
+        w_style = self.get_cfg("widget_style", "cristal") or "cristal"
+        show_sub = bool(self.get_cfg("show_status_text", True))
+        sig = (
+            w, h, has_bat, pct, charging, saver, life_min, style, accent_rgb, show_sub,
+            w_style, self.get_cfg("opacity", 0.88), self.get_cfg("bg_color", ""),
+            self.get_cfg("bg_image", ""), self.get_cfg("font_family", ""),
+            self.get_cfg("font_scale", 1.0), bool(self._hover_inside),
+            self._hover_resize_dir, self.is_resizing, bool(self.get_cfg("lock_position", False)),
+        )
+        if sig == self._last_bat_sig:
+            return
+        self._last_bat_sig = sig
+
+        composite = self._build_card_surface(w, h, accent_rgb=accent_rgb)
+        draw = ImageDraw.Draw(composite, "RGBA")
+
+        pad = max(10, int(14 * s))
+        btn_s = max(16, int(18 * s))
+        self._draw_min_button(composite, draw, w - pad - btn_s, pad - 2, w - pad, pad - 2 + btn_s, is_collapsed=False)
+
+        if not has_bat:
+            st_label = "Corriente AC"
+            pct_label = "AC"
+        else:
+            pct_label = f"{pct}%"
+            if charging:
+                st_label = "Cargando" if pct < 100 else "Carga completa"
+            elif saver:
+                st_label = "Ahorro activo"
+            elif life_min and life_min > 0:
+                hrs, mins = divmod(int(life_min), 60)
+                st_label = f"{hrs}h {mins:02d}m rest." if hrs > 0 else f"{mins} min rest."
+            else:
+                st_label = "En batería"
+
+        f_big = self._get_styled_font(max(14, int(23 * s)), bold_default=True)
+        f_title = self._get_styled_font(max(9, int(10.5 * s)), bold_default=True)
+        f_sub = self._get_styled_font(max(9, int(10 * s)), bold_default=False)
+
+        if style == "barra":
+            tx = pad
+            ty = pad
+            draw.text((tx, ty), "BATERÍA", fill=(148, 163, 184, 225), font=f_title)
+            draw.text((tx, ty + int(16 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            if show_sub:
+                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(*accent_rgb, 240), font=f_sub)
+            bar_x1 = pad + int(84 * s)
+            bar_x2 = w - pad - btn_s - int(10 * s)
+            bar_h = max(14, int(20 * s))
+            bar_y1 = (h - bar_h) // 2 + int(3 * s)
+            bar_y2 = bar_y1 + bar_h
+            if bar_x2 > bar_x1 + 24:
+                alpha_rounded_rect(composite, [bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 3, fill=(255, 255, 255, 26), outline=(148, 163, 184, 140), width=1)
+                fill_w = max(4, int((bar_x2 - bar_x1 - 6) * (pct / 100.0)))
+                alpha_rounded_rect(composite, [bar_x1 + 3, bar_y1 + 3, bar_x1 + 3 + fill_w, bar_y2 - 3], radius=max(2, (bar_h - 6) // 3), fill=(*accent_rgb, 235))
+                cap_y1 = bar_y1 + bar_h // 4
+                cap_y2 = bar_y2 - bar_h // 4
+                draw.rounded_rectangle([bar_x2 + 1, cap_y1, bar_x2 + max(3, int(4 * s)), cap_y2], radius=2, fill=(148, 163, 184, 180))
+        elif style == "pildora":
+            bar_h = max(24, int(36 * s))
+            bar_y1 = (h - bar_h) // 2 + int(4 * s)
+            bar_y2 = bar_y1 + bar_h
+            bar_x1 = pad
+            bar_x2 = w - pad - btn_s - int(8 * s)
+            alpha_rounded_rect(composite, [bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, fill=(255, 255, 255, 22), outline=(*accent_rgb, 145), width=2)
+            fill_w = max(bar_h - 8, int((bar_x2 - bar_x1 - 8) * (pct / 100.0)))
+            alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=(bar_h - 8) // 2, fill=(*accent_rgb, 195))
+            draw.text((bar_x1 + int(14 * s), (bar_y1 + bar_y2) // 2), pct_label, fill=(255, 255, 255, 255), font=self._get_styled_font(max(12, int(15 * s)), bold_default=True), anchor="lm")
+            if show_sub and (bar_x2 - bar_x1) > 120:
+                draw.text((bar_x2 - int(12 * s), (bar_y1 + bar_y2) // 2), st_label, fill=(241, 245, 249, 230), font=f_sub, anchor="rm")
+        else:
+            # "anillo" & "neon" circular gauge styles
+            ring_d = min(h - pad * 2, int(68 * s))
+            ring_d = max(36, ring_d)
+            rx1 = pad
+            ry1 = (h - ring_d) // 2
+            rx2 = rx1 + ring_d
+            ry2 = ry1 + ring_d
+            thick = max(4, int((7 if style == "neon" else 6) * s))
+            if style == "neon":
+                draw.arc([rx1 - 2, ry1 - 2, rx2 + 2, ry2 + 2], start=-90, end=-90 + int(360 * (pct / 100.0)), fill=(*accent_rgb, 80), width=thick + 4)
+            draw.arc([rx1, ry1, rx2, ry2], start=0, end=360, fill=(255, 255, 255, 32), width=thick)
+            span = int(360 * (pct / 100.0))
+            if span > 0:
+                draw.arc([rx1, ry1, rx2, ry2], start=-90, end=-90 + span, fill=(*accent_rgb, 245), width=thick)
+            draw.text(((rx1 + rx2) / 2, (ry1 + ry2) / 2), pct_label, fill=(248, 250, 252, 255), font=self._get_styled_font(max(11, int(14 * s)), bold_default=True), anchor="mm")
+
+            tx = rx2 + int(14 * s)
+            draw.text((tx, pad + int(2 * s)), "BATERÍA", fill=(*accent_rgb, 235) if style == "neon" else (148, 163, 184, 225), font=f_title)
+            draw.text((tx, pad + int(20 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            if show_sub:
+                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(203, 213, 225, 230), font=f_sub)
+
+        if charging:
+            # Tiny clean bolt glyph near status
+            bx = w - pad - btn_s - int(14 * s)
+            by = pad + btn_s // 2 - 2
+            draw.polygon([(bx + 2, by - 5), (bx - 3, by + 1), (bx + 1, by + 1), (bx - 2, by + 6), (bx + 4, by - 1), (bx, by - 1)], fill=(250, 204, 21, 245))
+
+        self._render_to_canvas(composite, w, h)
+
+    def _set_style(self, style_name):
+        self.set_cfg("style", style_name)
+        self._last_bat_sig = None
+        self._render()
+
+    def _pick_accent(self):
+        from tkinter import colorchooser
+        cur = self.get_cfg("accent_color", "#22c55e") or "#22c55e"
+        res = colorchooser.askcolor(color=cur, title="Color de Acento - Batería", parent=self.window)
+        if res and res[1]:
+            self.set_cfg("accent_color", res[1])
+            self._last_bat_sig = None
+            self._render()
+
+    def _on_context_menu(self, event):
+        from custom_menu import CustomMenu
+        menu = CustomMenu(self.window)
+        cur_st = (self.get_cfg("style", "anillo") or "anillo").lower()
+        sec_st = menu.add_section("Estilo de Batería", expanded=True)
+        sec_st.add_command("Anillo Circular", lambda: self._set_style("anillo"), checked=(cur_st == "anillo"))
+        sec_st.add_command("Barra Horizontal", lambda: self._set_style("barra"), checked=(cur_st == "barra"))
+        sec_st.add_command("Neón Energía", lambda: self._set_style("neon"), checked=(cur_st == "neon"))
+        sec_st.add_command("Píldora Compacta", lambda: self._set_style("pildora"), checked=(cur_st == "pildora"))
+        sec_st.add_separator()
+        sec_st.add_command("Color de acento...", self._pick_accent)
+        sec_st.add_command("Configuración de Energía Windows...", lambda: os.startfile("ms-settings:batterysaver"))
+        menu.add_separator()
+        self._append_common_menu_items(menu)
+        menu.show(event.x_root, event.y_root)
+
+
 class DesktopWidgetManager:
     """Manages lifecycle and live settings synchronization of all desktop widgets."""
     def __init__(self, root, config_mgr, on_open_settings=None):
@@ -2960,6 +3284,7 @@ class DesktopWidgetManager:
         self.widgets = {
             "clock": ClockWidget(root, config_mgr, on_open_settings=on_open_settings),
             "system_monitor": SysMonitorWidget(root, config_mgr, on_open_settings=on_open_settings),
+            "battery": BatteryWidget(root, config_mgr, on_open_settings=on_open_settings),
             "desktop_minidock": DesktopMiniDockWidget(root, config_mgr, on_open_settings=on_open_settings),
             "todo_list": TodoListWidget(root, config_mgr, on_open_settings=on_open_settings),
             "quick_access": QuickAccessWidget(root, config_mgr, on_open_settings=on_open_settings),

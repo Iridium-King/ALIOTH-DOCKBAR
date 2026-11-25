@@ -1045,6 +1045,92 @@
       color: #60a5fa;
     }
 
+    .effect-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    .effect-opt {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 9px 11px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.16s ease;
+    }
+
+    .effect-opt:hover {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(96, 165, 250, 0.45);
+    }
+
+    .effect-opt.selected {
+      background: rgba(59, 130, 246, 0.22);
+      border-color: #60a5fa;
+      color: #ffffff;
+      box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.35);
+    }
+
+    .effect-opt svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      color: #60a5fa;
+    }
+
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .theme-card {
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 12px;
+      padding: 11px 13px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+
+    .theme-card:hover {
+      border-color: rgba(96, 165, 250, 0.55);
+      background: rgba(59, 130, 246, 0.10);
+      transform: translateY(-1px);
+    }
+
+    .theme-card.active {
+      border-color: #60a5fa;
+      background: rgba(59, 130, 246, 0.18);
+    }
+
+    .theme-swatches {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .theme-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+    }
+
     .widget-typo-section {
       margin-top: 8px;
       padding-top: 10px;
@@ -1126,90 +1212,179 @@
     <main>
       <!-- TAB 1: GENERAL -->
       <div id="tab-general" class="tab-content active">
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            Posición en Pantalla
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              Posición en Pantalla
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Ubicación del Dock</span>
-              <span class="setting-desc">Borde de la pantalla donde se ancla la barra</span>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Ubicación del Dock</span>
+                <span class="setting-desc">Borde de la pantalla donde se ancla la barra</span>
+              </div>
+              <div class="radio-group" id="pos-group">
+                <div class="radio-option" data-pos="bottom" onclick="setPos('bottom')">Abajo</div>
+                <div class="radio-option" data-pos="top" onclick="setPos('top')">Arriba</div>
+                <div class="radio-option" data-pos="left" onclick="setPos('left')">Izquierda</div>
+                <div class="radio-option" data-pos="right" onclick="setPos('right')">Derecha</div>
+              </div>
             </div>
-            <div class="radio-group" id="pos-group">
-              <div class="radio-option" data-pos="bottom" onclick="setPos('bottom')">Abajo</div>
-              <div class="radio-option" data-pos="top" onclick="setPos('top')">Arriba</div>
-              <div class="radio-option" data-pos="left" onclick="setPos('left')">Izquierda</div>
-              <div class="radio-option" data-pos="right" onclick="setPos('right')">Derecha</div>
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Separación del Borde de Pantalla</span>
-              <span class="setting-desc">0 px para que quede pegada al ras de la pantalla</span>
-            </div>
-            <div class="slider-container">
-              <input type="range" id="edge_offset" min="0" max="60" value="0" oninput="updateSetting('appearance', 'edge_offset', parseInt(this.value)); updateLabel('lbl-edge', this.value + ' px')">
-              <span class="slider-val" id="lbl-edge">0 px</span>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Separación del Borde de Pantalla</span>
+                <span class="setting-desc">0 px para que quede pegada al ras de la pantalla</span>
+              </div>
+              <div class="slider-container">
+                <input type="range" id="edge_offset" min="0" max="60" value="0" oninput="updateSetting('appearance', 'edge_offset', parseInt(this.value)); updateLabel('lbl-edge', this.value + ' px')">
+                <span class="slider-val" id="lbl-edge">0 px</span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            Comportamiento y Arranque
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Comportamiento y Arranque
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Ocultar Detrás de Ventanas Abiertas</span>
-              <span class="setting-desc">Queda detrás de cualquier ventana (maximizada o normal) y emerge al tocar el borde</span>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Ocultar Detrás de Ventanas Abiertas</span>
+                <span class="setting-desc">Queda detrás de cualquier ventana (maximizada o normal) y emerge al tocar el borde</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="autohide" onchange="updateSetting('general', 'autohide', this.checked)">
+                <span class="slider"></span>
+              </label>
             </div>
-            <label class="switch">
-              <input type="checkbox" id="autohide" onchange="updateSetting('general', 'autohide', this.checked)">
-              <span class="slider"></span>
-            </label>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mostrar Programas Abiertos en la Dockbar</span>
+                <span class="setting-desc">Muestra a la derecha las apps abiertas (incluyendo PWAs y apps dentro de carpetas)</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="show_open_windows" onchange="updateSetting('general', 'show_open_windows', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Iniciar Automáticamente con Windows</span>
+                <span class="setting-desc">Sin requerir permisos de administrador</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="start_with_windows" onchange="updateSetting('general', 'start_with_windows', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Bloquear Iconos del Dock</span>
+                <span class="setting-desc">Evita mover o eliminar elementos por accidente</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="locked" onchange="updateSetting('general', 'locked', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Mostrar Programas Abiertos en la Dockbar</span>
-              <span class="setting-desc">Muestra a la derecha las apps abiertas (incluyendo PWAs y apps dentro de carpetas)</span>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="show_open_windows" onchange="updateSetting('general', 'show_open_windows', this.checked)">
-              <span class="slider"></span>
-            </label>
+        </div>
+
+        <div class="card collapsible">
+          <div class="card-title">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+              Lanzador de Aplicaciones (Menú Inicio / macOS Drawer)
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Iniciar Automáticamente con Windows</span>
-              <span class="setting-desc">Sin requerir permisos de administrador</span>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Modo del Botón Lanzador</span>
+                <span class="setting-desc">Abre una cuadrícula ligera de solo aplicaciones o el Menú Inicio nativo (tecla Windows)</span>
+              </div>
+              <div class="radio-group" id="launcher-mode-group">
+                <div class="radio-option" data-lmode="custom" onclick="setLauncherMode('custom')">Drawer macOS</div>
+                <div class="radio-option" data-lmode="windows" onclick="setLauncherMode('windows')">Inicio Windows</div>
+              </div>
             </div>
-            <label class="switch">
-              <input type="checkbox" id="start_with_windows" onchange="updateSetting('general', 'start_with_windows', this.checked)">
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Bloquear Iconos del Dock</span>
-              <span class="setting-desc">Evita mover o eliminar elementos por accidente</span>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Acceso Directo en la Dockbar</span>
+                <span class="setting-desc">Inserta el icono del lanzador directamente en tu barra para abrir aplicaciones rápido</span>
+              </div>
+              <button type="button" class="btn btn-primary" onclick="selectSystemAction('app_launcher', 'Aplicaciones')">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Añadir Lanzador al Dock
+              </button>
             </div>
-            <label class="switch">
-              <input type="checkbox" id="locked" onchange="updateSetting('general', 'locked', this.checked)">
-              <span class="slider"></span>
-            </label>
           </div>
         </div>
       </div>
 
       <!-- TAB 2: APARIENCIA Y ZOOM -->
       <div id="tab-appearance" class="tab-content">
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-            Tamaño y Zoom de Iconos
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+              Temas Visuales y Perfiles Guardados
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Aplicar También Iconos Recomendados por el Tema</span>
+                <span class="setting-desc">Configura automáticamente iconos del Dockbar acordes al tema seleccionado</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="theme_apply_icons" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="theme-grid" id="themes-preset-grid">
+              <div style="font-size:12px; color:var(--text-muted);">Cargando temas...</div>
+            </div>
+            <div style="margin-top:14px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06);">
+              <div class="setting-label" style="margin-bottom:6px;">Guardar Configuración Actual como Tema Personalizado</div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                <input type="text" id="custom-theme-name" class="search-input" style="flex:1; min-width:180px; border:1px solid rgba(255,255,255,0.12); padding:7px 10px; border-radius:8px; background:rgba(0,0,0,0.22);" placeholder="Ej. Mi Estilo Nocturno Pro">
+                <button type="button" class="btn btn-primary" onclick="saveCurrentAsCustomTheme()">Guardar Tema Actual</button>
+              </div>
+              <div class="theme-grid" id="themes-saved-grid"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card collapsible">
+          <div class="card-title">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              Tamaño y Zoom de Iconos
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Tamaño Base de Iconos</span>
@@ -1240,13 +1415,20 @@
               <span class="slider-val" id="lbl-spacing">10 px</span>
             </div>
           </div>
+          </div>
         </div>
 
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            Cristal y Efectos de la Dockbar
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Cristal, Bordes, Separadores y Efectos
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
+          <div class="card-body">
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Color de Fondo de la Barra</span>
@@ -1288,22 +1470,44 @@
               <span class="slider"></span>
             </label>
           </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Efecto al Abrir Aplicaciones</span>
-              <span class="setting-desc">Animación visual cuando ejecutas un acceso en la Dockbar (incluye Gota de Agua / Energía)</span>
+          <div class="setting-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+              <div class="setting-info">
+                <span class="setting-label">Efecto al Abrir Aplicaciones</span>
+                <span class="setting-desc">Animación luminosa cuando lanzas una aplicación desde la Dockbar</span>
+              </div>
+              <button class="btn btn-primary" type="button" onclick="previewLaunchEffect()">Probar Efecto</button>
             </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-              <select class="select-input" id="launch_effect" onchange="onLaunchEffectChange(this.value)">
-                <option value="gota_energia">💧 Gota de Agua / Energía (Azul)</option>
-                <option value="gota_rebote">🌊 Gota de Energía + Rebote</option>
-                <option value="rebote">🏀 Rebote Clásico (macOS)</option>
-                <option value="pulso_neon">✨ Pulso Neón Luminoso</option>
-                <option value="levitacion">🚀 Levitación y Haz de Luz</option>
-                <option value="pop_elastico">⚡ Pop Elástico con Destellos</option>
-                <option value="ninguno">🚫 Sin efecto</option>
-              </select>
-              <button class="btn btn-primary" type="button" onclick="previewLaunchEffect()">Probar</button>
+            <input type="hidden" id="launch_effect" value="gota_energia">
+            <div class="effect-grid" id="launch-effect-grid">
+              <button type="button" class="effect-opt" data-eff="gota_energia" onclick="onLaunchEffectChange('gota_energia')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/><path d="M4 20c3.5-1.5 12.5-1.5 16 0"/></svg>
+                <span>Gota Aqua / Energía</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="gota_rebote" onclick="onLaunchEffectChange('gota_rebote')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 14c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><path d="M12 4v6"/><path d="M9 7l3-3 3 3"/></svg>
+                <span>Gota + Rebote</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="pulso_neon" onclick="onLaunchEffectChange('pulso_neon')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7" stroke-dasharray="12 6"/><circle cx="12" cy="12" r="10" stroke-opacity="0.45"/></svg>
+                <span>Aurora Orbital Neón</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="levitacion" onclick="onLaunchEffectChange('levitacion')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M8 8l4-4 4 4"/><ellipse cx="12" cy="19" rx="7" ry="2.2"/></svg>
+                <span>Haz Volumétrico</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="pop_elastico" onclick="onLaunchEffectChange('pop_elastico')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><circle cx="12" cy="12" r="3"/></svg>
+                <span>Destello Supernova</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="rebote" onclick="onLaunchEffectChange('rebote')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17c2.5-8 6.5-10 8-10s5.5 2 8 10"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
+                <span>Rebote Seda Clásico</span>
+              </button>
+              <button type="button" class="effect-opt" data-eff="ninguno" onclick="onLaunchEffectChange('ninguno')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/></svg>
+                <span>Sin Efecto</span>
+              </button>
             </div>
           </div>
           <div class="setting-row">
@@ -1333,21 +1537,99 @@
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <span class="setting-label">Indicador de Aplicaciones Abiertas</span>
-              <span class="setting-desc">Punto luminoso estilo macOS debajo de programas en ejecución</span>
+              <span class="setting-label">Borde de la Dockbar</span>
+              <span class="setting-desc">Activa, colorea, define grosor y tipo de línea del contorno de la barra</span>
             </div>
-            <label class="switch">
-              <input type="checkbox" id="show_running_indicators" onchange="updateSetting('appearance', 'show_running_indicators', this.checked)">
-              <span class="slider"></span>
-            </label>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <label class="switch" title="Mostrar borde en la Dockbar">
+                <input type="checkbox" id="border_enabled" checked onchange="updateSetting('appearance', 'border_enabled', this.checked)">
+                <span class="slider"></span>
+              </label>
+              <input type="color" id="border_color_input" style="opacity:0; width:0; height:0;" onchange="updateColorPair('border_color', 'border-color-swatch', this.value)">
+              <div class="color-swatch" id="border-color-swatch" title="Color de borde" onclick="document.getElementById('border_color_input').click()"></div>
+              <select class="select-input" id="border_style" onchange="updateSetting('appearance', 'border_style', this.value)">
+                <option value="solid">Sólida</option>
+                <option value="dashed">Discontinua</option>
+                <option value="dotted">Punteada</option>
+                <option value="double">Doble</option>
+                <option value="neon">Neón Luminosa</option>
+              </select>
+              <div class="slider-container" style="width:120px;">
+                <input type="range" id="border_width" min="1" max="6" value="1" oninput="updateSetting('appearance', 'border_width', parseInt(this.value)); updateLabel('lbl-bw', this.value + ' px')">
+                <span class="slider-val" id="lbl-bw">1 px</span>
+              </div>
+              <div class="slider-container" style="width:120px;" title="Opacidad del borde">
+                <input type="range" id="border_opacity" min="0.05" max="1.0" step="0.05" value="0.22" oninput="updateSetting('appearance', 'border_opacity', parseFloat(this.value)); updateLabel('lbl-bop', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-bop">22%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Estilo de Separadores de la Dockbar</span>
+              <span class="setting-desc">Color, grosor, opacidad y tipo de línea de los divisores</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <input type="color" id="separator_color_input" style="opacity:0; width:0; height:0;" onchange="updateColorPair('separator_color', 'sep-color-swatch', this.value)">
+              <div class="color-swatch" id="sep-color-swatch" title="Color de separador" onclick="document.getElementById('separator_color_input').click()"></div>
+              <select class="select-input" id="separator_style" onchange="updateSetting('appearance', 'separator_style', this.value)">
+                <option value="solid">Sólido</option>
+                <option value="dashed">Discontinuo</option>
+                <option value="dotted">Punteado</option>
+                <option value="double">Doble</option>
+                <option value="glow">Luminoso</option>
+              </select>
+              <div class="slider-container" style="width:120px;">
+                <input type="range" id="separator_width" min="1" max="6" value="2" oninput="updateSetting('appearance', 'separator_width', parseInt(this.value)); updateLabel('lbl-sepw', this.value + ' px')">
+                <span class="slider-val" id="lbl-sepw">2 px</span>
+              </div>
+              <div class="slider-container" style="width:120px;" title="Opacidad del separador">
+                <input type="range" id="separator_opacity" min="0.1" max="1.0" step="0.05" value="0.28" oninput="updateSetting('appearance', 'separator_opacity', parseFloat(this.value)); updateLabel('lbl-sepop', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-sepop">28%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Indicador de Aplicaciones Abiertas</span>
+              <span class="setting-desc">Activa y personaliza tipo, color y tamaño del indicador debajo de apps en ejecución</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+              <label class="switch">
+                <input type="checkbox" id="show_running_indicators" onchange="updateSetting('appearance', 'show_running_indicators', this.checked)">
+                <span class="slider"></span>
+              </label>
+              <select class="select-input" id="indicator_style" onchange="updateSetting('appearance', 'indicator_style', this.value)">
+                <option value="dot">Punto</option>
+                <option value="pill">Píldora</option>
+                <option value="line">Línea Luminosa</option>
+                <option value="ring">Anillo</option>
+                <option value="diamond">Rombo</option>
+              </select>
+              <input type="color" id="indicator_color_input" style="opacity:0; width:0; height:0;" onchange="updateColorPair('indicator_color', 'ind-color-swatch', this.value)">
+              <div class="color-swatch" id="ind-color-swatch" title="Color del indicador" onclick="document.getElementById('indicator_color_input').click()"></div>
+              <div class="slider-container" style="width:120px;">
+                <input type="range" id="indicator_size" min="3" max="12" value="4" oninput="updateSetting('appearance', 'indicator_size', parseInt(this.value)); updateLabel('lbl-indsz', this.value + ' px')">
+                <span class="slider-val" id="lbl-indsz">4 px</span>
+              </div>
+            </div>
+          </div>
           </div>
         </div>
 
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-            Etiquetas Flotantes (Dockbar)
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+              Etiquetas Flotantes (Dockbar)
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
+          <div class="card-body">
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Mostrar Etiquetas al Pasar el Mouse</span>
@@ -1402,13 +1684,20 @@
               <div class="color-swatch" id="lbl-fg-swatch" title="Color de texto" onclick="document.getElementById('label_fg_input').click()"></div>
             </div>
           </div>
+          </div>
         </div>
 
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title">
-            <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            Etiquetas de Accesos dentro de Carpetas
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              Etiquetas de Accesos dentro de Carpetas
+            </span>
+            <span class="card-head-right">
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
+          <div class="card-body">
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Mostrar Etiquetas dentro de las Carpetas</span>
@@ -1453,44 +1742,48 @@
               <div class="color-swatch" id="folder-lbl-fg-swatch" title="Color de texto en carpetas" onclick="document.getElementById('folder_label_fg_input').click()"></div>
             </div>
           </div>
+          </div>
         </div>
       </div>
 
       <!-- TAB 3: ICONOS Y ELEMENTOS -->
       <div id="tab-items" class="tab-content">
         <!-- Buscador Universal e Inteligente -->
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title" style="justify-content: space-between; flex-wrap: wrap;">
-            <span style="display:flex; align-items:center; gap:8px;">
+            <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               Buscador Universal (Apps, Store y PWAs)
             </span>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <div class="radio-group" id="search-cat-group">
+            <span class="card-head-right">
+              <div class="radio-group" id="search-cat-group" onclick="event.stopPropagation()">
                 <div class="radio-option selected" data-cat="all" onclick="setSearchCategory('all')">Todos</div>
                 <div class="radio-option" data-cat="pwa" onclick="setSearchCategory('pwa')">PWAs / Store</div>
                 <div class="radio-option" data-cat="desktop" onclick="setSearchCategory('desktop')">Escritorio</div>
               </div>
-              <button class="btn" style="padding:5px 10px;" onclick="runAppSearch(document.getElementById('app-search-input').value, true)">Actualizar</button>
+              <button class="btn" style="padding:5px 10px;" onclick="event.stopPropagation(); runAppSearch(document.getElementById('app-search-input').value, true)">Actualizar</button>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="search-box">
+              <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="app-search-input" class="search-input" placeholder="Busca WhatsApp, Codex, ChatGPT, Claude, Excel, Chrome..." oninput="onSearchInput(this.value)">
             </div>
-          </div>
-          <div class="search-box">
-            <svg class="ico ico-sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="app-search-input" class="search-input" placeholder="Busca WhatsApp, Codex, ChatGPT, Claude, Excel, Chrome..." oninput="onSearchInput(this.value)">
-          </div>
-          <div class="search-results" id="app-search-results" style="max-height:280px;">
-            <div style="font-size:12px; color:var(--text-muted); padding:6px 2px;">Cargando catálogo indexado de Windows...</div>
+            <div class="search-results" id="app-search-results" style="max-height:280px;">
+              <div style="font-size:12px; color:var(--text-muted); padding:6px 2px;">Cargando catálogo indexado de Windows...</div>
+            </div>
           </div>
         </div>
 
         <!-- Elementos actuales -->
-        <div class="card">
+        <div class="card collapsible">
           <div class="card-title" style="justify-content: space-between; flex-wrap: wrap;">
-            <span style="display:flex; align-items:center; gap:8px;">
+            <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
               Accesos en tu Dockbar
             </span>
-            <div style="display:flex; gap:8px; flex-wrap: wrap;">
+            <span class="card-head-right" onclick="event.stopPropagation()" style="flex-wrap:wrap;">
               <button class="btn" onclick="addProgramDialog()">
                 <svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                 Examinar Archivo...
@@ -1503,19 +1796,127 @@
                 <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Separador
               </button>
-            </div>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
           </div>
-          <div class="items-container" id="items-list"></div>
+          <div class="card-body">
+            <div class="items-container" id="items-list"></div>
+          </div>
         </div>
       </div>
 
       <!-- TAB 4: WIDGETS DE ESCRITORIO -->
       <div id="tab-widgets" class="tab-content">
         <div class="widget-toolbar">
-          <span style="font-size:12px; color:var(--text-muted);">Haz clic en el encabezado de cualquier widget para expandir o contraer sus ajustes.</span>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="btn" style="padding:5px 11px;" onclick="setAllWidgetCards(true)">Expandir todos</button>
-            <button type="button" class="btn" style="padding:5px 11px;" onclick="setAllWidgetCards(false)">Contraer todos</button>
+          <span style="font-size:12px; color:var(--text-muted);">Pasa el cursor sobre cualquier apartado para expandirlo. Para redimensionar un widget, arrastra cualquiera de sus 8 puntos directamente en el escritorio.</span>
+        </div>
+
+        <!-- 0. CÁPSULA MULTIMEDIA SOBRE DOCKBAR -->
+        <div class="card collapsible" data-wcard="media_capsule">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+              Cápsula de Reproductor Multimedia (Sobre la Dockbar)
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Mostrar / Ocultar Cápsula Multimedia">
+                <input type="checkbox" id="media_capsule_enabled" onchange="updateSetting('general', 'media_capsule_enabled', this.checked)">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Control Automático del Reproductor Activo</span>
+                <span class="setting-desc">Muestra título y artista en vivo sobre una cápsula centrada encima del Dock (Spotify, YouTube, Edge, Chrome, VLC) con botones Anterior / Play-Pausa / Siguiente</span>
+              </div>
+              <span style="font-size:11px; color:#93c5fd;">Integración WinRT SMTC</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Estilo Visual de la Cápsula</span>
+                <span class="setting-desc">Elige el acabado de cristal o neón de la cápsula flotante</span>
+              </div>
+              <div class="radio-group" id="capsule-style-group">
+                <div class="radio-option" data-cstyle="cristal" onclick="setCapsuleStyle('cristal')">Cristal</div>
+                <div class="radio-option" data-cstyle="neon" onclick="setCapsuleStyle('neon')">Neón</div>
+                <div class="radio-option" data-cstyle="minimal" onclick="setCapsuleStyle('minimal')">Minimal</div>
+                <div class="radio-option" data-cstyle="oled" onclick="setCapsuleStyle('oled')">OLED</div>
+                <div class="radio-option" data-cstyle="acrilico" onclick="setCapsuleStyle('acrilico')">Acrílico</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 0b. BATERÍA EN DOCKBAR Y ESCRITORIO -->
+        <div class="card collapsible" data-wcard="battery">
+          <div class="card-title" onclick="toggleWidgetCard(this)">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="13" x2="23" y2="11"/><path d="M6 12h6"/></svg>
+              Widget de Batería (Escritorio y Dockbar)
+            </span>
+            <span class="card-head-right">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Widget de Batería en Escritorio">
+                <input type="checkbox" id="w_bat_enabled" onchange="updateWidget('battery', {enabled: this.checked})">
+                <span class="slider"></span>
+              </label>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Indicador de Batería en la Dockbar</span>
+                <span class="setting-desc">Inserta un medidor vivo de % de batería dentro de la barra o elige su diseño</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <select class="select-input" id="dock_battery_style" onchange="updateSetting('appearance', 'dock_battery_style', this.value)">
+                  <option value="ring">Anillo en Dock</option>
+                  <option value="bar">Barra Clásica</option>
+                  <option value="pill">Píldora</option>
+                  <option value="minimal">Minimalista</option>
+                </select>
+                <button type="button" class="btn btn-primary" onclick="addBatteryToDockbar()">Añadir a la Dockbar</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Estilo en el Escritorio</span></div>
+              <div class="radio-group" id="w_bat_style_group">
+                <div class="radio-option" data-bstyle="anillo" onclick="setBatteryWidgetStyle('anillo')">Anillo</div>
+                <div class="radio-option" data-bstyle="barra" onclick="setBatteryWidgetStyle('barra')">Barra</div>
+                <div class="radio-option" data-bstyle="neon" onclick="setBatteryWidgetStyle('neon')">Neón</div>
+                <div class="radio-option" data-bstyle="pildora" onclick="setBatteryWidgetStyle('pildora')">Píldora</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Tamaño del Widget de Escritorio</span></div>
+              <div class="radio-group" id="w_bat_size"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Opacidad del Cristal</span></div>
+              <div class="slider-container">
+                <input type="range" id="w_bat_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('battery', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-bat-op', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-w-bat-op">88%</span>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Mostrar Estado / Tiempo Restante</span></div>
+              <label class="switch">
+                <input type="checkbox" id="w_bat_status_txt" checked onchange="updateWidget('battery', {show_status_text: this.checked})">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><span class="setting-label">Color de Acento</span><span class="setting-desc">O déjalo vacío para color automático según carga</span></div>
+              <div class="color-btn-wrapper">
+                <input type="color" id="w_bat_acc_input" style="opacity:0; width:0; height:0;" onchange="setBatteryWidgetAccent(this.value)">
+                <div class="color-swatch" id="w_bat_acc_swatch" onclick="document.getElementById('w_bat_acc_input').click()"></div>
+                <button type="button" class="btn" style="padding:5px 9px;" onclick="setBatteryWidgetAccent('')">Auto</button>
+              </div>
+            </div>
+            <div class="widget-typo-mount" data-wid="battery"></div>
           </div>
         </div>
 
@@ -1893,6 +2294,7 @@
     };
 
     const SYSTEM_ACTIONS = [
+      {id: "app_launcher", name: "Lanzador de Apps (Inicio)"},
       {id: "show_desktop", name: "Mostrar Escritorio"},
       {id: "display_settings", name: "Configuración de Pantalla"},
       {id: "sound_settings", name: "Sonido y Volumen"},
@@ -1917,6 +2319,8 @@
         const res = await fetch('/api/config');
         currentConfig = await res.json();
         renderConfigUI(currentConfig);
+        initHoverExpandCards();
+        loadThemes();
         runAppSearch('');
         loadInstalledPwas();
 
@@ -2067,29 +2471,51 @@
     function selectWidgetSize(containerId, wId, val, el) {
       document.querySelectorAll(`#${containerId} .radio-option`).forEach(x => x.classList.remove('selected'));
       el.classList.add('selected');
-      const wInp = document.getElementById(`w_cw_${wId}`);
-      const hInp = document.getElementById(`w_ch_${wId}`);
-      if (wInp) wInp.value = '';
-      if (hInp) hInp.value = '';
       updateWidget(wId, {size_scale: val, custom_w: null, custom_h: null});
     }
 
-    let _widgetCardsInitialized = false;
+    let _hoverCardsInitialized = false;
 
     function toggleWidgetCard(titleEl) {
       const card = titleEl.closest('.card.collapsible');
       if (card) card.classList.toggle('expanded');
     }
 
-    function setAllWidgetCards(expand) {
-      document.querySelectorAll('#tab-widgets .card.collapsible').forEach(c => {
-        c.classList.toggle('expanded', !!expand);
+    function initHoverExpandCards() {
+      if (_hoverCardsInitialized) return;
+      _hoverCardsInitialized = true;
+      document.querySelectorAll('.card.collapsible').forEach(card => {
+        card.classList.remove('expanded');
+        let closeTimer = null;
+        const cancelClose = () => {
+          if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+        };
+        card.addEventListener('mouseenter', () => {
+          cancelClose();
+          card.classList.add('expanded');
+        });
+        card.addEventListener('mouseleave', () => {
+          cancelClose();
+          closeTimer = setTimeout(() => {
+            const ae = document.activeElement;
+            if (ae && card.contains(ae) && (ae.tagName === 'SELECT' || ae.tagName === 'INPUT')) {
+              const onBlur = () => {
+                ae.removeEventListener('blur', onBlur);
+                if (!card.matches(':hover')) card.classList.remove('expanded');
+              };
+              ae.addEventListener('blur', onBlur, {once: true});
+              return;
+            }
+            card.classList.remove('expanded');
+          }, 90);
+        });
       });
     }
 
     function mountWidgetTypographyControls() {
       const defaults = {
         clock: {w: 270, h: 112},
+        battery: {w: 230, h: 96},
         todo_list: {w: 320, h: 260},
         system_monitor: {w: 270, h: 175},
         quick_access: {w: 280, h: 78},
@@ -2218,15 +2644,10 @@
           </div>
           <div class="setting-row">
             <div class="setting-info">
-              <span class="setting-label">Redimensionar (Ancho × Alto px)</span>
-              <span class="setting-desc">Ajusta medidas exactas o arrastra la esquina inferior derecha del widget</span>
+              <span class="setting-label">Redimensionar Directamente en Escritorio (8 Puntos)</span>
+              <span class="setting-desc">Pasa el cursor sobre el widget en tu escritorio y arrastra sus 8 puntos (esquinas y bordes)</span>
             </div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <input type="number" class="dim-input" id="w_cw_${wId}" min="120" max="900" placeholder="${def.w}" title="Ancho en px" onchange="applyWidgetCustomDims('${wId}', ${def.w}, ${def.h})">
-              <span style="font-size:12px; color:var(--text-muted);">×</span>
-              <input type="number" class="dim-input" id="w_ch_${wId}" min="50" max="720" placeholder="${def.h}" title="Alto en px" onchange="applyWidgetCustomDims('${wId}', ${def.w}, ${def.h})">
-              <button type="button" class="btn" style="padding:5px 9px;" onclick="resetWidgetAutoDims('${wId}')">Auto</button>
-            </div>
+            <button type="button" class="btn" style="padding:5px 10px;" onclick="resetWidgetAutoDims('${wId}')">Tamaño Auto</button>
           </div>
         `;
       });
@@ -2267,10 +2688,6 @@
       const ispEl = document.getElementById(`w_isp_${wId}`);
       if (ispEl) ispEl.value = isp;
       updateLabel(`lbl_isp_${wId}`, Math.round(isp * 100) + '%');
-      const cwEl = document.getElementById(`w_cw_${wId}`);
-      const chEl = document.getElementById(`w_ch_${wId}`);
-      if (cwEl) cwEl.value = (cfg.custom_w !== null && cfg.custom_w !== undefined) ? cfg.custom_w : '';
-      if (chEl) chEl.value = (cfg.custom_h !== null && cfg.custom_h !== undefined) ? cfg.custom_h : '';
     }
 
     function setWidgetBgColor(wId, hex) {
@@ -2326,23 +2743,7 @@
       updateWidget(wId, {[key]: next});
     }
 
-    function applyWidgetCustomDims(wId, defW, defH) {
-      const cwEl = document.getElementById(`w_cw_${wId}`);
-      const chEl = document.getElementById(`w_ch_${wId}`);
-      let cw = parseInt(cwEl ? cwEl.value : '', 10);
-      let ch = parseInt(chEl ? chEl.value : '', 10);
-      if (isNaN(cw) || cw < 110) cw = defW;
-      if (isNaN(ch) || ch < 48) ch = defH;
-      if (cwEl) cwEl.value = cw;
-      if (chEl) chEl.value = ch;
-      updateWidget(wId, {custom_w: cw, custom_h: ch});
-    }
-
     function resetWidgetAutoDims(wId) {
-      const cwEl = document.getElementById(`w_cw_${wId}`);
-      const chEl = document.getElementById(`w_ch_${wId}`);
-      if (cwEl) cwEl.value = '';
-      if (chEl) chEl.value = '';
       const payload = {custom_w: null, custom_h: null};
       if (wId === 'todo_list') {
         payload.auto_grow = true;
@@ -2350,6 +2751,140 @@
         if (tdAg) tdAg.checked = true;
       }
       updateWidget(wId, payload);
+    }
+
+    function updateColorPair(key, swatchId, hex) {
+      const sw = document.getElementById(swatchId);
+      if (sw) sw.style.backgroundColor = hex;
+      updateSetting('appearance', key, hex);
+    }
+
+    function setLauncherMode(mode) {
+      document.querySelectorAll('#launcher-mode-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-lmode') === mode);
+      });
+      updateSetting('general', 'launcher_mode', mode);
+    }
+
+    function setCapsuleStyle(st) {
+      document.querySelectorAll('#capsule-style-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cstyle') === st);
+      });
+      updateSetting('general', 'media_capsule_style', st);
+    }
+
+    function setBatteryWidgetStyle(st) {
+      document.querySelectorAll('#w_bat_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bstyle') === st);
+      });
+      updateWidget('battery', {style: st});
+    }
+
+    function setBatteryWidgetAccent(hex) {
+      const sw = document.getElementById('w_bat_acc_swatch');
+      if (sw) sw.style.backgroundColor = hex || '#22c55e';
+      const inp = document.getElementById('w_bat_acc_input');
+      if (inp && hex) inp.value = hex;
+      updateWidget('battery', {accent_color: hex});
+    }
+
+    async function addBatteryToDockbar() {
+      try {
+        const res = await fetch('/api/add_battery_dock', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: 'Batería'})
+        });
+        const data = await res.json();
+        if (data.items) renderItems(data.items);
+      } catch (e) { console.error(e); }
+    }
+
+    let _themesPayload = null;
+
+    async function loadThemes() {
+      try {
+        const res = await fetch('/api/themes');
+        _themesPayload = await res.json();
+        renderThemes(_themesPayload);
+      } catch (e) { console.error(e); }
+    }
+
+    function renderThemes(data) {
+      if (!data) return;
+      const activeId = data.active_theme || 'macos_x';
+      const pGrid = document.getElementById('themes-preset-grid');
+      if (pGrid) {
+        pGrid.innerHTML = (data.presets || []).map(t => `
+          <div class="theme-card ${t.id === activeId ? 'active' : ''}" onclick="applyThemePreset('${t.id}')">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+              <strong style="font-size:13px;">${escapeHtml(t.name)}</strong>
+              <span class="source-tag">${t.id === activeId ? 'Activo' : 'Aplicar'}</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted);">${escapeHtml(t.description || '')}</div>
+            <div class="theme-swatches">${(t.swatches || []).map(c => `<span class="theme-dot" style="background:${c};"></span>`).join('')}</div>
+          </div>
+        `).join('');
+      }
+      const sGrid = document.getElementById('themes-saved-grid');
+      if (sGrid) {
+        const saved = data.saved || [];
+        if (!saved.length) {
+          sGrid.innerHTML = '<div style="font-size:12px; color:var(--text-muted);">Aún no tienes temas personalizados guardados.</div>';
+        } else {
+          sGrid.innerHTML = saved.map(t => `
+            <div class="theme-card ${t.id === activeId ? 'active' : ''}">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                <strong style="font-size:13px; cursor:pointer;" onclick="applyThemePreset('${t.id}')">${escapeHtml(t.name)}</strong>
+                <div style="display:flex; gap:5px;">
+                  <button type="button" class="btn" style="padding:3px 8px; font-size:11px;" onclick="applyThemePreset('${t.id}')">Aplicar</button>
+                  <button type="button" class="btn" style="padding:3px 8px; font-size:11px; color:var(--danger);" onclick="deleteCustomTheme('${t.id}')">×</button>
+                </div>
+              </div>
+              <div class="theme-swatches">${(t.swatches || []).map(c => `<span class="theme-dot" style="background:${c};"></span>`).join('')}</div>
+            </div>
+          `).join('');
+        }
+      }
+    }
+
+    async function applyThemePreset(themeId) {
+      try {
+        const applyIconsEl = document.getElementById('theme_apply_icons');
+        const applyIcons = applyIconsEl ? !!applyIconsEl.checked : true;
+        await fetch('/api/apply_theme', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({theme_id: themeId, apply_icons: applyIcons})
+        });
+        await loadConfig();
+        await loadThemes();
+      } catch (e) { console.error(e); }
+    }
+
+    async function saveCurrentAsCustomTheme() {
+      const inp = document.getElementById('custom-theme-name');
+      const name = inp ? inp.value.trim() : '';
+      try {
+        await fetch('/api/save_custom_theme', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name || ('Mi Tema ' + new Date().toLocaleTimeString())})
+        });
+        if (inp) inp.value = '';
+        await loadThemes();
+      } catch (e) { console.error(e); }
+    }
+
+    async function deleteCustomTheme(themeId) {
+      try {
+        await fetch('/api/delete_custom_theme', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({theme_id: themeId})
+        });
+        await loadThemes();
+      } catch (e) { console.error(e); }
     }
 
     function renderConfigUI(cfg) {
@@ -2365,6 +2900,16 @@
       if (openWinEl) openWinEl.checked = !!gen.show_open_windows;
       document.getElementById('start_with_windows').checked = !!gen.start_with_windows;
       document.getElementById('locked').checked = !!gen.locked;
+      const lMode = gen.launcher_mode || 'custom';
+      document.querySelectorAll('#launcher-mode-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-lmode') === lMode);
+      });
+      const mcEnEl = document.getElementById('media_capsule_enabled');
+      if (mcEnEl) mcEnEl.checked = !!gen.media_capsule_enabled;
+      const mcSt = gen.media_capsule_style || 'cristal';
+      document.querySelectorAll('#capsule-style-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cstyle') === mcSt);
+      });
 
       const app = cfg.appearance || {};
       document.getElementById('edge_offset').value = app.edge_offset ?? 0;
@@ -2395,6 +2940,9 @@
       const effVal = app.launch_effect || (app.bounce_on_launch === false ? 'ninguno' : 'gota_energia');
       const effSel = document.getElementById('launch_effect');
       if (effSel) effSel.value = effVal;
+      document.querySelectorAll('#launch-effect-grid .effect-opt').forEach(btn => {
+        btn.classList.toggle('selected', btn.getAttribute('data-eff') === effVal);
+      });
       const effSpd = app.launch_effect_speed ?? 1.0;
       const effSpdEl = document.getElementById('launch_effect_speed');
       if (effSpdEl) effSpdEl.value = effSpd;
@@ -2405,7 +2953,50 @@
       const effInp = document.getElementById('launch_effect_color_input');
       if (effInp) effInp.value = effCol;
 
+      // Border, Separator & Indicator controls
+      const bEn = document.getElementById('border_enabled');
+      if (bEn) bEn.checked = app.border_enabled !== false;
+      const bCol = app.border_color || '#ffffff';
+      const bSw = document.getElementById('border-color-swatch');
+      if (bSw) bSw.style.backgroundColor = bCol;
+      const bInp = document.getElementById('border_color_input');
+      if (bInp) bInp.value = bCol;
+      const bSt = document.getElementById('border_style');
+      if (bSt) bSt.value = app.border_style || 'solid';
+      const bwEl = document.getElementById('border_width');
+      if (bwEl) bwEl.value = app.border_width ?? 1;
+      updateLabel('lbl-bw', (app.border_width ?? 1) + ' px');
+      const bopEl = document.getElementById('border_opacity');
+      if (bopEl) bopEl.value = app.border_opacity ?? 0.22;
+      updateLabel('lbl-bop', Math.round((app.border_opacity ?? 0.22) * 100) + '%');
+
+      const sCol = app.separator_color || '#ffffff';
+      const sSw = document.getElementById('sep-color-swatch');
+      if (sSw) sSw.style.backgroundColor = sCol;
+      const sInp = document.getElementById('separator_color_input');
+      if (sInp) sInp.value = sCol;
+      const sSt = document.getElementById('separator_style');
+      if (sSt) sSt.value = app.separator_style || 'solid';
+      const swEl = document.getElementById('separator_width');
+      if (swEl) swEl.value = app.separator_width ?? 2;
+      updateLabel('lbl-sepw', (app.separator_width ?? 2) + ' px');
+      const sopEl = document.getElementById('separator_opacity');
+      if (sopEl) sopEl.value = app.separator_opacity ?? 0.28;
+      updateLabel('lbl-sepop', Math.round((app.separator_opacity ?? 0.28) * 100) + '%');
+
       document.getElementById('show_running_indicators').checked = app.show_running_indicators !== false;
+      const indSt = document.getElementById('indicator_style');
+      if (indSt) indSt.value = app.indicator_style || 'dot';
+      const indCol = app.indicator_color || '#60a5fa';
+      const indSw = document.getElementById('ind-color-swatch');
+      if (indSw) indSw.style.backgroundColor = indCol;
+      const indInp = document.getElementById('indicator_color_input');
+      if (indInp) indInp.value = indCol;
+      const indSzEl = document.getElementById('indicator_size');
+      if (indSzEl) indSzEl.value = app.indicator_size ?? 4;
+      updateLabel('lbl-indsz', (app.indicator_size ?? 4) + ' px');
+      const dbStEl = document.getElementById('dock_battery_style');
+      if (dbStEl) dbStEl.value = app.dock_battery_style || 'ring';
 
       document.getElementById('show_labels').checked = app.show_labels !== false;
       document.getElementById('label_font_family').value = app.label_font_family || 'Segoe UI';
@@ -2501,28 +3092,29 @@
       updateLabel('lbl-w-pwa-op', Math.round((wp.opacity ?? 0.88) * 100) + '%');
       renderSizeRadios('w_pwa_size', 'pwa_apps', wp.size_scale);
 
+      const wb = w.battery || {};
+      const wbEn = document.getElementById('w_bat_enabled');
+      if (wbEn) wbEn.checked = !!wb.enabled;
+      const wbOp = document.getElementById('w_bat_op');
+      if (wbOp) wbOp.value = wb.opacity ?? 0.88;
+      updateLabel('lbl-w-bat-op', Math.round((wb.opacity ?? 0.88) * 100) + '%');
+      renderSizeRadios('w_bat_size', 'battery', wb.size_scale);
+      const wbSt = wb.style || 'anillo';
+      document.querySelectorAll('#w_bat_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bstyle') === wbSt);
+      });
+      const wbTxt = document.getElementById('w_bat_status_txt');
+      if (wbTxt) wbTxt.checked = wb.show_status_text !== false;
+      const wbAcc = wb.accent_color || '#22c55e';
+      const wbSw = document.getElementById('w_bat_acc_swatch');
+      if (wbSw) wbSw.style.backgroundColor = wbAcc;
+
       syncWidgetTypographyUI('clock', wc);
+      syncWidgetTypographyUI('battery', wb);
       syncWidgetTypographyUI('todo_list', wt);
       syncWidgetTypographyUI('system_monitor', ws);
       syncWidgetTypographyUI('quick_access', wq);
       syncWidgetTypographyUI('pwa_apps', wp);
-
-      if (!_widgetCardsInitialized) {
-        _widgetCardsInitialized = true;
-        let anyExpanded = false;
-        document.querySelectorAll('#tab-widgets .card.collapsible').forEach(card => {
-          const wKey = card.getAttribute('data-wcard');
-          const isEn = !!(w[wKey] && w[wKey].enabled);
-          if (isEn) {
-            card.classList.add('expanded');
-            anyExpanded = true;
-          }
-        });
-        if (!anyExpanded) {
-          const first = document.querySelector('#tab-widgets .card.collapsible');
-          if (first) first.classList.add('expanded');
-        }
-      }
 
       renderItems(cfg.items || []);
     }
@@ -2543,6 +3135,10 @@
           iconHtml = SVG.sep;
           title = 'Separador Visual';
           sub = 'Línea de división';
+        } else if (it.type === 'battery') {
+          iconHtml = '<svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="13" x2="23" y2="11"/><path d="M6 12h6"/></svg>';
+          title = 'Indicador de Batería';
+          sub = 'Widget en Dockbar (porcentaje en vivo)';
         } else if (it.type === 'group') {
           sub = `${(it.items || []).length} elementos agrupados`;
         } else if (it.type === 'action') {
@@ -2718,6 +3314,11 @@
     }
 
     async function onLaunchEffectChange(val) {
+      const hiddenEl = document.getElementById('launch_effect');
+      if (hiddenEl) hiddenEl.value = val;
+      document.querySelectorAll('#launch-effect-grid .effect-opt').forEach(btn => {
+        btn.classList.toggle('selected', btn.getAttribute('data-eff') === val);
+      });
       if (currentConfig && currentConfig.appearance) {
         currentConfig.appearance.launch_effect = val;
         currentConfig.appearance.bounce_on_launch = (val !== 'ninguno');

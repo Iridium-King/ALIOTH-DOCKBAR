@@ -457,3 +457,42 @@ def find_lowest_app_above_desktop(exclude_hwnds=()):
 
     return lowest_app, desk_cover
 
+
+class _SYSTEM_POWER_STATUS(ctypes.Structure):
+    _fields_ = [
+        ("ACLineStatus", ctypes.c_byte),
+        ("BatteryFlag", ctypes.c_byte),
+        ("BatteryLifePercent", ctypes.c_byte),
+        ("SystemStatusFlag", ctypes.c_byte),
+        ("BatteryLifeTime", wintypes.DWORD),
+        ("BatteryFullLifeTime", wintypes.DWORD),
+    ]
+
+
+def get_battery_status():
+    """Returns live Windows battery percentage, AC charging state, and availability."""
+    s = _SYSTEM_POWER_STATUS()
+    try:
+        if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(s)):
+            pct = int(s.BatteryLifePercent)
+            if pct < 0:
+                pct += 256
+            has_battery = (pct != 255) and not (s.BatteryFlag & 128)
+            if pct > 100:
+                pct = 100
+            charging = (s.ACLineStatus == 1) or bool(s.BatteryFlag & 8)
+            life_sec = int(s.BatteryLifeTime)
+            if life_sec == 0xFFFFFFFF or life_sec < 0:
+                life_sec = -1
+            return {
+                "has_battery": has_battery,
+                "percent": pct if has_battery else 100,
+                "charging": bool(charging),
+                "saver": bool(s.SystemStatusFlag & 1),
+                "life_minutes": (life_sec // 60) if life_sec > 0 else None,
+            }
+    except Exception:
+        pass
+    return {"has_battery": False, "percent": 100, "charging": True, "saver": False, "life_minutes": None}
+
+

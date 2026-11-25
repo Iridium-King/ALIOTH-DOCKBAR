@@ -18,7 +18,7 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import icon_extractor
 from config import ConfigManager
 from custom_menu import CustomMenu
-from window_utils import set_tool_window, update_layered_pil, release_layered_surface, flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse, alpha_line, resolve_styled_font, find_lowest_app_above_desktop
+from window_utils import set_tool_window, update_layered_pil, release_layered_surface, flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse, alpha_line, resolve_styled_font, find_lowest_app_above_desktop, get_battery_status
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -487,6 +487,17 @@ class DockWindow:
         self._dynamic_icon_cache = OrderedDict()
         self._last_dynamic_sig = ()
         self._pwa_name_cache = {}
+        self.active_launcher = None
+        self._bat_cache = None
+        self._bat_cache_ts = 0.0
+        self._bat_icon_cache = None
+        self._last_bat_draw_ts = 0.0
+        try:
+            from media_capsule import MediaCapsule
+            self.media_capsule = MediaCapsule(self)
+        except Exception as _mc_ex:
+            print(f"[Dock] MediaCapsule init note: {_mc_ex}")
+            self.media_capsule = None
 
         # Click-outside immediate autohide & Show Desktop Z-order tracking
         self._prev_btn_down = False
@@ -511,6 +522,11 @@ class DockWindow:
         # Initial load
         self.reload_items()
         self.update_geometry()
+        if self.media_capsule:
+            try:
+                self.media_capsule.sync_visibility()
+            except Exception:
+                pass
 
         # Start loops
         self._start_animation_loop()
@@ -1433,6 +1449,7 @@ class DockWindow:
         self.icon_cache.clear()
         self._scaled_icon_cache.clear()
         self._pill_cache.clear()
+        self._bat_icon_cache = None
         for it in self.pinned_items:
             it_id = it.get("id")
             if it.get("type") in ("app", "group", "action"):
@@ -1469,7 +1486,7 @@ class DockWindow:
         # Estimate tight max width with wave expansion (smaller buffer = faster 60+ FPS blits)
         num_items = max(1, len(self.items))
         lbl_font_sz = int(self.config_mgr.get("appearance", "label_font_size", 12))
-        label_clearance = max(44, lbl_font_sz + 28) if self.config_mgr.get("appearance", "show_labels", True) else 6
+        label_clearance = max(58, lbl_font_sz + 40) if self.config_mgr.get("appearance", "show_labels", True) else 34
         
         dock_h = max_icon_h + (pad_y * 2) + label_clearance
         wave_extra = base_size * max(0.2, max_zoom - 1.0) * min(num_items, 3.6)
@@ -1518,10 +1535,16 @@ class DockWindow:
                     int(x), int(y), int(dock_w), int(dock_h),
                     SWP_NOZORDER | SWP_SHOWWINDOW | SWP_NOACTIVATE
                 )
+            if not self.is_revealed:
                 self._place_above_desktop_below_apps()
         except Exception as e:
             print(f"[Dock] SetWindowPos error: {e}")
         self._dirty = True
+        if getattr(self, "media_capsule", None):
+            try:
+                self.media_capsule.sync_visibility()
+            except Exception:
+                pass
 
     def live_update(self):
         """Immediately updates items and geometry in real-time."""
@@ -1920,6 +1943,104 @@ class DockWindow:
     # -------------------------------------------------------------
     # Off-screen Pillow Rendering (Zero Flicker, True Alpha Pill)
     # -------------------------------------------------------------
+    @staticmethod
+    def _rounded_rect_perimeter_pts(x1, y1, x2, y2, r, step=4.0):
+        """Samples evenly-spaced points along a rounded rectangle perimeter for dashed/dotted borders."""
+        r = max(2, min(r, (x2 - x1) / 2.0, (y2 - y1) / 2.0))
+        segs = []
+        def _add_line(ax, ay, bx, by):
+            d = math.hypot(bx - ax, by - ay)
+            n = max(1, int(d / step))
+            for k in range(n):
+                t = k / n
+                segs.append((ax + (bx - ax) * t, ay + (by - ay) * t))
+        def _add_arc(cx, cy, start_deg, end_deg):
+            arc_len = abs(end_deg - start_deg) * math.pi / 180.0 * r
+            n = max(3, int(arc_len / step))
+            for k in range(n):
+                ang = math.radians(start_deg + (end_deg - start_deg) * (k / n))
+                segs.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+        _add_line(x1 + r, y1, x2 - r, y1)
+        _add_arc(x2 - r, y1 + r, -90, 0)
+        _add_line(x2, y1 + r, x2, y2 - r)
+        _add_arc(x2 - r, y2 - r, 0, 90)
+        _add_line(x2 - r, y2, x1 + r, y2)
+        _add_arc(x1 + r, y2 - r, 90, 180)
+        _add_line(x1, y2 - r, x1, y1 + r)
+        _add_arc(x1 + r, y1 + r, 180, 270)
+        return segs
+
+    def _get_battery_cached(self):
+        now = time.monotonic()
+        if self._bat_cache is None or (now - getattr(self, "_bat_cache_ts", 0.0)) >= 4.0:
+            self._bat_cache = get_battery_status()
+            self._bat_cache_ts = now
+        return self._bat_cache
+
+    def _get_battery_icon_img(self, size, bat_info, style):
+        pct = int(bat_info.get("percent", 100)) if bat_info.get("has_battery") else 100
+        charging = bool(bat_info.get("charging", False))
+        key = (int(size), pct, charging, str(style))
+        if self._bat_icon_cache and self._bat_icon_cache[0] == key:
+            return self._bat_icon_cache[1]
+        s = max(24, int(size))
+        hi_s = s * 2
+        hi = Image.new("RGBA", (hi_s, hi_s), (0, 0, 0, 0))
+        hd = ImageDraw.Draw(hi, "RGBA")
+        if pct <= 15 and not charging:
+            acc = (239, 68, 68)
+        elif pct <= 30 and not charging:
+            acc = (245, 158, 11)
+        elif charging:
+            acc = (56, 189, 248)
+        else:
+            acc = (34, 197, 94)
+
+        cx = cy = hi_s // 2
+        pad = int(hi_s * 0.12)
+        hd.rounded_rectangle([pad - 2, pad - 2, hi_s - pad + 2, hi_s - pad + 2], radius=int(hi_s * 0.24), fill=(15, 23, 42, 215), outline=(255, 255, 255, 55), width=2)
+        st = (style or "ring").lower()
+        lbl = f"{pct}%" if bat_info.get("has_battery") else "AC"
+        if st == "bar":
+            bx1, bx2 = int(hi_s * 0.18), int(hi_s * 0.78)
+            by1, by2 = int(hi_s * 0.34), int(hi_s * 0.66)
+            hd.rounded_rectangle([bx1, by1, bx2, by2], radius=6, fill=(255, 255, 255, 26), outline=(226, 232, 240, 210), width=3)
+            hd.rounded_rectangle([bx2 + 2, by1 + (by2 - by1) // 4, bx2 + 8, by2 - (by2 - by1) // 4], radius=2, fill=(226, 232, 240, 210))
+            fw = max(4, int((bx2 - bx1 - 10) * (pct / 100.0)))
+            hd.rounded_rectangle([bx1 + 5, by1 + 5, bx1 + 5 + fw, by2 - 5], radius=3, fill=(*acc, 240))
+            f_pct = self._get_font("segoeuib.ttf", max(14, int(hi_s * 0.17)))
+            hd.text((cx, int(hi_s * 0.79)), lbl, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
+        elif st == "pill":
+            hd.rounded_rectangle([int(hi_s * 0.15), int(hi_s * 0.28), int(hi_s * 0.85), int(hi_s * 0.72)], radius=int(hi_s * 0.22), fill=(*acc, 55), outline=(*acc, 230), width=4)
+            f_pct = self._get_font("segoeuib.ttf", max(16, int(hi_s * 0.22)))
+            hd.text((cx, cy), lbl, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
+        elif st == "minimal":
+            f_pct = self._get_font("segoeuib.ttf", max(18, int(hi_s * 0.26)))
+            hd.text((cx, cy - int(hi_s * 0.05)), lbl, fill=(*acc, 255), font=f_pct, anchor="mm")
+            bar_w = int(hi_s * 0.54)
+            bx1 = cx - bar_w // 2
+            hd.rounded_rectangle([bx1, int(hi_s * 0.70), bx1 + bar_w, int(hi_s * 0.77)], radius=3, fill=(255, 255, 255, 45))
+            hd.rounded_rectangle([bx1, int(hi_s * 0.70), bx1 + max(4, int(bar_w * (pct / 100.0))), int(hi_s * 0.77)], radius=3, fill=(*acc, 245))
+        else:
+            # "ring" gauge (default)
+            r_in = int(hi_s * 0.28)
+            th = max(5, int(hi_s * 0.07))
+            hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=0, end=360, fill=(255, 255, 255, 38), width=th)
+            span = int(360 * (pct / 100.0))
+            if span > 0:
+                hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=-90, end=-90 + span, fill=(*acc, 250), width=th)
+            f_pct = self._get_font("segoeuib.ttf", max(14, int(hi_s * 0.19)))
+            hd.text((cx, cy), f"{pct}", fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
+
+        if charging:
+            bx = int(hi_s * 0.80)
+            by = int(hi_s * 0.22)
+            hd.polygon([(bx + 2, by - 7), (bx - 5, by + 1), (bx + 1, by + 1), (bx - 2, by + 8), (bx + 6, by - 1), (bx, by - 1)], fill=(250, 204, 21, 255))
+
+        img = hi.resize((s, s), Image.Resampling.LANCZOS)
+        self._bat_icon_cache = (key, img)
+        return img
+
     def _render_composite_dock(self):
         win_w = getattr(self, "dock_w", self.canvas.winfo_width())
         win_h = getattr(self, "dock_h", self.canvas.winfo_height())
@@ -1933,8 +2054,11 @@ class DockWindow:
         corner_radius = self.config_mgr.get("appearance", "corner_radius", 20)
         bg_hex = self.config_mgr.get("appearance", "bg_color", "#181a20")
         bg_opacity = float(self.config_mgr.get("appearance", "bg_opacity", 0.82))
+        border_enabled = bool(self.config_mgr.get("appearance", "border_enabled", True))
         border_hex = self.config_mgr.get("appearance", "border_color", "#ffffff")
         border_opacity = float(self.config_mgr.get("appearance", "border_opacity", 0.18))
+        border_w = max(1, min(6, int(self.config_mgr.get("appearance", "border_width", 1) or 1)))
+        border_style = (self.config_mgr.get("appearance", "border_style", "solid") or "solid").lower()
         pos = self.config_mgr.get("general", "position", "bottom")
         edge_offset = int(self.config_mgr.get("appearance", "edge_offset", 6))
 
@@ -1999,7 +2123,7 @@ class DockWindow:
             elif pos == "top":
                 flat_mode = "flat_top"
 
-        pill_key = (pill_w_int, pill_h_int, corner_radius, bg_rgba, border_rgba, flat_mode)
+        pill_key = (pill_w_int, pill_h_int, corner_radius, bg_rgba, border_enabled, border_rgba, border_w, border_style, flat_mode)
         pill_img = self._pill_cache.get(pill_key)
         if pill_img is None:
             while len(self._pill_cache) >= 8:
@@ -2015,7 +2139,38 @@ class DockWindow:
                 rect_pts = [0, -hi_r, hi_w - 1, hi_h - 1]
             else:
                 rect_pts = [0, 0, hi_w - 1, hi_h - 1]
-            hd.rounded_rectangle(rect_pts, radius=hi_r, fill=bg_rgba, outline=border_rgba, width=ss)
+            hd.rounded_rectangle(rect_pts, radius=hi_r, fill=bg_rgba)
+            if border_enabled and border_rgba[3] > 2:
+                bw_hi = border_w * ss
+                pad_b = max(1, bw_hi // 2)
+                b_pts = [rect_pts[0] + pad_b, rect_pts[1] + pad_b, rect_pts[2] - pad_b, rect_pts[3] - pad_b]
+                if border_style == "neon":
+                    glow_a = max(15, int(border_rgba[3] * 0.35))
+                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=(border_rgb[0], border_rgb[1], border_rgb[2], glow_a), width=bw_hi * 3)
+                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
+                elif border_style == "double":
+                    w1 = max(2, bw_hi // 2)
+                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=w1)
+                    ins = bw_hi + ss * 3
+                    in_pts = [b_pts[0] + ins, b_pts[1] + ins, b_pts[2] - ins, b_pts[3] - ins]
+                    if in_pts[2] > in_pts[0] + 20 and in_pts[3] > in_pts[1] + 20:
+                        hd.rounded_rectangle(in_pts, radius=max(4, hi_r - pad_b - ins), outline=border_rgba, width=w1)
+                elif border_style in ("dashed", "dotted"):
+                    pts = self._rounded_rect_perimeter_pts(b_pts[0], b_pts[1], b_pts[2], b_pts[3], max(4, hi_r - pad_b), step=4.0)
+                    if border_style == "dashed":
+                        dash_on, dash_off = 5, 4
+                        cyc = dash_on + dash_off
+                        for idx_p in range(len(pts)):
+                            if (idx_p % cyc) < dash_on and idx_p + 1 < len(pts):
+                                hd.line([pts[idx_p], pts[idx_p + 1]], fill=border_rgba, width=bw_hi)
+                    else:
+                        step_d = max(3, int(bw_hi * 1.45))
+                        rad_d = max(2, bw_hi // 2)
+                        for idx_p in range(0, len(pts), step_d):
+                            px_d, py_d = pts[idx_p]
+                            hd.ellipse([px_d - rad_d, py_d - rad_d, px_d + rad_d, py_d + rad_d], fill=border_rgba)
+                else:
+                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
             pill_img = hi.resize((pill_w_int, pill_h_int), Image.Resampling.LANCZOS)
             self._pill_cache[pill_key] = pill_img
         else:
@@ -2086,149 +2241,193 @@ class DockWindow:
                 item_y = max(2, item_y + bounce_dy)
 
             if it_type == "separator":
-                sep_w = max(3, int(base_size * 0.1))
-                sep_h = int(dock_pill_h * 0.55)
+                sep_hex = self.config_mgr.get("appearance", "separator_color", "#ffffff") or "#ffffff"
+                sep_rgb = hex_to_rgb(sep_hex)
+                sep_op = float(self.config_mgr.get("appearance", "separator_opacity", 0.28) if self.config_mgr.get("appearance", "separator_opacity", None) is not None else 0.28)
+                sep_rgba = (*sep_rgb, max(12, min(255, int(255 * sep_op))))
+                sep_w = max(1, min(6, int(self.config_mgr.get("appearance", "separator_width", 2) or 2)))
+                sep_st = (self.config_mgr.get("appearance", "separator_style", "solid") or "solid").lower()
+                sep_h = int(dock_pill_h * 0.58)
                 sy1 = pill_y1 + (dock_pill_h - sep_h) // 2
                 sy2 = sy1 + sep_h
-                sx = cur_x + (size - sep_w) // 2
-                alpha_line(composite, [(sx, sy1), (sx, sy2)], fill=(255, 255, 255, 60), width=2)
+                sx = cur_x + size // 2
+                if sep_st == "dashed":
+                    y_c = sy1
+                    while y_c < sy2:
+                        y_e = min(sy2, y_c + 6)
+                        alpha_line(composite, [(sx, y_c), (sx, y_e)], fill=sep_rgba, width=sep_w)
+                        y_c += 10
+                elif sep_st == "dotted":
+                    y_c = sy1 + 2
+                    rad_s = max(1, sep_w // 2 + 1)
+                    while y_c <= sy2 - 2:
+                        alpha_ellipse(composite, [sx - rad_s, y_c - rad_s, sx + rad_s, y_c + rad_s], fill=sep_rgba)
+                        y_c += max(6, rad_s * 3)
+                elif sep_st == "double":
+                    off = max(2, sep_w)
+                    alpha_line(composite, [(sx - off, sy1), (sx - off, sy2)], fill=sep_rgba, width=max(1, sep_w // 2 + 1))
+                    alpha_line(composite, [(sx + off, sy1), (sx + off, sy2)], fill=sep_rgba, width=max(1, sep_w // 2 + 1))
+                elif sep_st == "glow":
+                    alpha_line(composite, [(sx, sy1), (sx, sy2)], fill=(*sep_rgb, max(18, int(sep_rgba[3] * 0.35))), width=sep_w + 6)
+                    alpha_line(composite, [(sx, sy1), (sx, sy2)], fill=sep_rgba, width=sep_w)
+                else:
+                    alpha_line(composite, [(sx, sy1), (sx, sy2)], fill=sep_rgba, width=sep_w)
                 self.item_rects.append((cur_x, pill_y1, cur_x + size, pill_y2))
             else:
                 icx = int(cur_x + size * 0.5)
                 icy = int(item_y + size * 0.5)
                 floor_y = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
 
-                # Under-icon launch aura / energy effects
+                # Under-icon launch aura / 3D ripples / volumetric beam
                 if active_eff in ("gota_energia", "gota_rebote"):
-                    r_pool = int(size * (0.40 + 0.26 * math.sin(p_eff * math.pi)))
-                    alpha_ellipse(
-                        composite,
-                        [icx - r_pool, icy - r_pool, icx + r_pool, icy + r_pool],
-                        fill=(er, eg, eb, int(86 * decay)),
-                    )
-                    rx_f = int(size * (0.24 + 0.86 * p_eff))
-                    ry_f = max(3, int(rx_f * 0.24))
-                    alpha_ellipse(
-                        composite,
-                        [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f],
-                        fill=(er, eg, eb, int(44 * decay)),
-                        outline=(min(255, er + 50), min(255, eg + 40), 255, int(210 * decay)),
-                        width=2,
-                    )
-                elif active_eff == "pulso_neon":
-                    pulse = abs(math.sin(p_eff * math.pi * 3.0))
-                    r2 = int(size * (0.58 + 0.28 * pulse))
-                    r1 = int(size * (0.46 + 0.20 * pulse))
-                    alpha_ellipse(
-                        composite,
-                        [icx - r2, icy - r2, icx + r2, icy + r2],
-                        fill=(er, eg, eb, int(44 * decay)),
-                        outline=(er, eg, eb, int(155 * decay)),
-                        width=2,
-                    )
-                    alpha_ellipse(
-                        composite,
-                        [icx - r1, icy - r1, icx + r1, icy + r1],
-                        fill=(er, eg, eb, int(78 * decay * pulse)),
-                        outline=(255, 255, 255, int(195 * decay * pulse)),
-                        width=2,
-                    )
-                elif active_eff == "levitacion":
-                    lift_s = math.sin(p_eff * math.pi)
-                    pad_rx = int(size * (0.38 + 0.16 * lift_s))
-                    pad_ry = max(3, int(size * 0.11))
-                    beam_w = max(5, int(size * 0.24 * lift_s))
-                    top_b, bot_b = min(icy, floor_y), max(icy, floor_y)
-                    if bot_b - top_b > 4:
-                        alpha_rounded_rect(
-                            composite,
-                            [icx - beam_w, top_b, icx + beam_w, bot_b],
-                            radius=beam_w,
-                            fill=(er, eg, eb, int(68 * lift_s)),
-                        )
-                    alpha_ellipse(
-                        composite,
-                        [icx - pad_rx, floor_y - pad_ry, icx + pad_rx, floor_y + pad_ry],
-                        fill=(er, eg, eb, int(130 * lift_s)),
-                        outline=(255, 255, 255, int(215 * lift_s)),
-                        width=1,
-                    )
-                elif active_eff == "pop_elastico":
-                    r_fl = int(size * (0.46 + 0.20 * p_eff))
-                    alpha_ellipse(
-                        composite,
-                        [icx - r_fl, icy - r_fl, icx + r_fl, icy + r_fl],
-                        fill=(er, eg, eb, int(56 * decay)),
-                    )
-
-                # App icon or group icon (size-cached for silky 60+ FPS waves)
-                icon_img = self.icon_cache.get(it_id)
-                if icon_img:
-                    draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
-                    sk = (it_id, draw_sz)
-                    resized = self._scaled_icon_cache.get(sk)
-                    if resized is None:
-                        while len(self._scaled_icon_cache) >= 48:
-                            self._scaled_icon_cache.popitem(last=False)
-                        resized = icon_img.resize((draw_sz, draw_sz), Image.Resampling.LANCZOS)
-                        self._scaled_icon_cache[sk] = resized
-                    else:
-                        self._scaled_icon_cache.move_to_end(sk)
-                    dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
-                    dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
-                    composite.alpha_composite(resized, (dx_ic, dy_ic))
-
-                # Over-icon expanding water/energy ripples & spark bursts
-                if active_eff in ("gota_energia", "gota_rebote"):
-                    for w_idx, delay_p in enumerate((0.0, 0.18, 0.36)):
-                        if p_eff >= delay_p:
-                            lp = min(1.0, (p_eff - delay_p) / max(0.1, 1.0 - delay_p))
-                            ldec = (1.0 - lp) ** 1.25
-                            rad = int(size * (0.28 + 0.85 * lp))
-                            ring_a = int((225 - w_idx * 42) * ldec)
-                            if ring_a > 4:
-                                fill_col = (er, eg, eb, int(28 * ldec)) if w_idx == 0 else None
+                    # 1) Caustic luminous pool under icon
+                    pool_r = int(size * (0.44 + 0.30 * math.sin(p_eff * math.pi)))
+                    alpha_ellipse(composite, [icx - pool_r, icy - pool_r, icx + pool_r, icy + pool_r], fill=(er, eg, eb, int(92 * decay)))
+                    # 2) Concentric 3D perspective floor ripples (inspired by aqua splash waves)
+                    for rw_i, dly in enumerate((0.0, 0.14, 0.30)):
+                        if p_eff >= dly:
+                            lp = min(1.0, (p_eff - dly) / max(0.1, 1.0 - dly))
+                            ld = (1.0 - lp) ** 1.15
+                            rx_f = int(size * (0.28 + 1.15 * lp))
+                            ry_f = max(3, int(rx_f * 0.25))
+                            ra = int((235 - rw_i * 45) * ld)
+                            if ra > 6:
                                 alpha_ellipse(
                                     composite,
-                                    [icx - rad, icy - rad, icx + rad, icy + rad],
-                                    fill=fill_col,
-                                    outline=(min(255, er + 35), min(255, eg + 30), 255, ring_a) if w_idx == 0 else (er, eg, eb, ring_a),
-                                    width=3 if w_idx == 0 else 2,
+                                    [icx - rx_f, floor_y - ry_f, icx + rx_f, floor_y + ry_f],
+                                    fill=(er, eg, eb, int(36 * ld)) if rw_i == 0 else None,
+                                    outline=(min(255, er + 70), min(255, eg + 65), 255, ra),
+                                    width=3 if rw_i == 0 else 2,
                                 )
-                    if p_eff < 0.55:
-                        dp = p_eff / 0.55
-                        drop_y = max(4, int(icy + (1.0 - dp) * (size * 0.32) - dp * (size * 0.46)))
-                        dr = max(3, int(5 * (1.0 - dp * 0.45)))
-                        alpha_ellipse(
-                            composite,
-                            [icx - dr, drop_y - dr, icx + dr, drop_y + dr],
-                            fill=(224, 242, 254, int(235 * (1.0 - dp))),
-                            outline=(er, eg, eb, int(205 * (1.0 - dp))),
-                            width=1,
-                        )
+                    # 3) Back crown splash lobes rising behind/around the icon
+                    if p_eff < 0.85:
+                        sp_t = p_eff / 0.85
+                        rise = math.sin(min(1.0, sp_t * 1.15) * math.pi)
+                        sp_a = int(215 * (1.0 - sp_t * 0.8))
+                        for side in (-1, 1):
+                            for k_lobe in range(3):
+                                ang = math.radians(-105 + side * (22 + k_lobe * 14))
+                                len_sp = size * (0.45 + 0.42 * rise) * (1.0 - k_lobe * 0.12)
+                                bx0 = icx + side * size * (0.22 + k_lobe * 0.08)
+                                by0 = floor_y - 2
+                                tx0 = icx + math.cos(ang) * len_sp + side * (size * 0.18)
+                                ty0 = floor_y + math.sin(ang) * len_sp
+                                alpha_line(composite, [(bx0, by0), (tx0, ty0)], fill=(min(255, er + 80), min(255, eg + 70), 255, sp_a), width=max(2, 4 - k_lobe))
+                elif active_eff == "pulso_neon":
+                    pulse = abs(math.sin(p_eff * math.pi * 3.0))
+                    r2 = int(size * (0.64 + 0.34 * pulse))
+                    r1 = int(size * (0.48 + 0.22 * pulse))
+                    alpha_ellipse(composite, [icx - r2, icy - r2, icx + r2, icy + r2], fill=(er, eg, eb, int(50 * decay)), outline=(er, eg, eb, int(175 * decay)), width=2)
+                    alpha_ellipse(composite, [icx - r1, icy - r1, icx + r1, icy + r1], fill=(er, eg, eb, int(86 * decay * pulse)), outline=(255, 255, 255, int(215 * decay * pulse)), width=2)
+                    ang_s = int((p_eff * 540) % 360)
+                    r_orb = int(size * 0.72)
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s, end=ang_s + 115, fill=(min(255, er + 60), min(255, eg + 60), 255, int(235 * decay)), width=3)
+                    draw.arc([icx - r_orb, icy - r_orb, icx + r_orb, icy + r_orb], start=ang_s + 180, end=ang_s + 295, fill=(er, eg, eb, int(200 * decay)), width=3)
+                elif active_eff == "levitacion":
+                    lift_s = math.sin(p_eff * math.pi)
+                    pad_rx = int(size * (0.44 + 0.18 * lift_s))
+                    pad_ry = max(3, int(size * 0.12))
+                    beam_w = max(7, int(size * 0.32 * lift_s))
+                    top_b, bot_b = min(icy, floor_y), max(icy, floor_y)
+                    if bot_b - top_b > 4:
+                        alpha_rounded_rect(composite, [icx - beam_w, top_b, icx + beam_w, bot_b], radius=beam_w, fill=(er, eg, eb, int(74 * lift_s)))
+                        ring_y = int(bot_b - (bot_b - top_b) * ((p_eff * 2.0) % 1.0))
+                        alpha_ellipse(composite, [icx - beam_w - 4, ring_y - 3, icx + beam_w + 4, ring_y + 3], outline=(255, 255, 255, int(195 * lift_s)), width=2)
+                    alpha_ellipse(composite, [icx - pad_rx, floor_y - pad_ry, icx + pad_rx, floor_y + pad_ry], fill=(er, eg, eb, int(145 * lift_s)), outline=(255, 255, 255, int(225 * lift_s)), width=2)
                 elif active_eff == "pop_elastico":
-                    for k_ang in range(8):
-                        ang = (k_ang * math.pi / 4.0) + (p_eff * 0.35)
-                        r_in = size * (0.38 + 0.42 * p_eff)
-                        r_out = r_in + size * (0.22 * decay)
+                    r_fl = int(size * (0.48 + 0.28 * p_eff))
+                    alpha_ellipse(composite, [icx - r_fl, icy - r_fl, icx + r_fl, icy + r_fl], fill=(er, eg, eb, int(68 * decay)))
+                    r_sw = int(size * (0.35 + 0.90 * p_eff))
+                    alpha_ellipse(composite, [icx - r_sw, icy - r_sw, icx + r_sw, icy + r_sw], outline=(255, 255, 255, int(210 * decay)), width=2)
+                elif active_eff == "rebote":
+                    sh_rx = max(6, int(size * (0.38 - 0.14 * min(1.0, abs(bounce_dy) / max(1.0, base_size * 0.4)))))
+                    alpha_ellipse(composite, [icx - sh_rx, floor_y - 3, icx + sh_rx, floor_y + 3], fill=(0, 0, 0, int(115 * decay)))
+
+                # App / Group / Action / Battery icon rendering
+                if it_type == "battery":
+                    bat_info = self._get_battery_cached()
+                    bat_st = self.config_mgr.get("appearance", "dock_battery_style", "ring")
+                    icon_img = self._get_battery_icon_img(size, bat_info, bat_st)
+                    draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
+                    dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
+                    dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
+                    if draw_sz != icon_img.width:
+                        icon_img = icon_img.resize((draw_sz, draw_sz), Image.Resampling.LANCZOS)
+                    composite.alpha_composite(icon_img, (dx_ic, dy_ic))
+                else:
+                    icon_img = self.icon_cache.get(it_id)
+                    if icon_img:
+                        draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
+                        sk = (it_id, draw_sz)
+                        resized = self._scaled_icon_cache.get(sk)
+                        if resized is None:
+                            while len(self._scaled_icon_cache) >= 48:
+                                self._scaled_icon_cache.popitem(last=False)
+                            resized = icon_img.resize((draw_sz, draw_sz), Image.Resampling.LANCZOS)
+                            self._scaled_icon_cache[sk] = resized
+                        else:
+                            self._scaled_icon_cache.move_to_end(sk)
+                        dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
+                        dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
+                        composite.alpha_composite(resized, (dx_ic, dy_ic))
+
+                # Over-icon crown splashes, ballistic water droplets & nova rays
+                if active_eff in ("gota_energia", "gota_rebote"):
+                    # Luminous base crown arc wrapping lower edges of icon
+                    cr_rx = int(size * (0.48 + 0.14 * math.sin(p_eff * math.pi)))
+                    cr_ry = int(size * (0.24 + 0.10 * math.sin(p_eff * math.pi)))
+                    crown_a = int(240 * decay)
+                    draw.arc([icx - cr_rx, floor_y - cr_ry * 2, icx + cr_rx, floor_y + 2], start=12, end=168, fill=(min(255, er + 100), min(255, eg + 100), 255, crown_a), width=3)
+                    # Ballistic specular water droplets arcing upward and outward
+                    for d_i, (ang_deg, spd_m, d_sz) in enumerate([(-132, 0.95, 4), (-110, 1.15, 5), (-90, 1.05, 4), (-70, 1.18, 5), (-48, 0.92, 4), (-150, 0.80, 3), (-30, 0.80, 3)]):
+                        dp = min(1.0, p_eff / 0.88)
+                        ang_r = math.radians(ang_deg)
+                        dist_d = size * spd_m * dp
+                        grav_d = (size * 0.52) * (dp ** 2)
+                        dx_p = int(icx + math.cos(ang_r) * dist_d)
+                        dy_p = max(2, int(icy + math.sin(ang_r) * dist_d + grav_d))
+                        da = int(245 * (1.0 - dp ** 1.5))
+                        if da > 8:
+                            dr = max(2, int(d_sz * (1.0 - dp * 0.35)))
+                            alpha_ellipse(composite, [dx_p - dr, dy_p - dr, dx_p + dr, dy_p + dr], fill=(224, 248, 255, da), outline=(er, eg, eb, min(255, da)), width=1)
+                elif active_eff == "pop_elastico":
+                    for k_ang in range(10):
+                        ang = (k_ang * math.pi / 5.0) + (p_eff * 0.42)
+                        r_in = size * (0.40 + 0.45 * p_eff)
+                        r_out = r_in + size * (0.26 * decay)
                         x1_s = icx + math.cos(ang) * r_in
                         y1_s = icy + math.sin(ang) * r_in
                         x2_s = icx + math.cos(ang) * r_out
                         y2_s = icy + math.sin(ang) * r_out
-                        alpha_line(composite, [(x1_s, y1_s), (x2_s, y2_s)], fill=(er, eg, eb, int(235 * decay)), width=2)
+                        alpha_line(composite, [(x1_s, y1_s), (x2_s, y2_s)], fill=(min(255, er + 55), min(255, eg + 55), 255, int(240 * decay)), width=2)
 
-                # Running app indicator dot (macOS style)
+                # Running app indicator (customizable type, color & size)
                 if self.config_mgr.get("appearance", "show_running_indicators", True):
                     is_open_dot = self._is_item_running(it)
                     if is_open_dot:
-                        dot_r = 3
+                        ind_st = (self.config_mgr.get("appearance", "indicator_style", "dot") or "dot").lower()
+                        ind_rgb = hex_to_rgb(self.config_mgr.get("appearance", "indicator_color", "#60a5fa") or "#60a5fa")
+                        ind_sz = max(3, min(12, int(self.config_mgr.get("appearance", "indicator_size", 4) or 4)))
                         dot_cx = int(cur_x + size // 2)
                         dot_cy = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
-                        draw.ellipse(
-                            [dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r],
-                            fill=(96, 165, 250, 240),
-                            outline=(255, 255, 255, 180)
-                        )
+                        if ind_st == "pill":
+                            hw = max(6, int(ind_sz * 1.8))
+                            hh = max(2, ind_sz // 2)
+                            draw.rounded_rectangle([dot_cx - hw, dot_cy - hh, dot_cx + hw, dot_cy + hh], radius=hh, fill=(*ind_rgb, 245), outline=(255, 255, 255, 175), width=1)
+                        elif ind_st == "line":
+                            hw = max(10, int(size * 0.24 + ind_sz * 1.4))
+                            hh = max(1, ind_sz // 3 + 1)
+                            alpha_line(composite, [(dot_cx - hw, dot_cy), (dot_cx + hw, dot_cy)], fill=(*ind_rgb, 95), width=hh * 3)
+                            draw.rounded_rectangle([dot_cx - hw, dot_cy - hh, dot_cx + hw, dot_cy + hh], radius=hh, fill=(*ind_rgb, 255))
+                        elif ind_st == "ring":
+                            r = max(3, ind_sz // 2 + 1)
+                            draw.ellipse([dot_cx - r, dot_cy - r, dot_cx + r, dot_cy + r], outline=(*ind_rgb, 255), width=2)
+                        elif ind_st == "diamond":
+                            r = max(3, ind_sz // 2 + 1)
+                            draw.polygon([(dot_cx, dot_cy - r), (dot_cx + r, dot_cy), (dot_cx, dot_cy + r), (dot_cx - r, dot_cy)], fill=(*ind_rgb, 245), outline=(255, 255, 255, 190))
+                        else:
+                            r = max(2, ind_sz // 2 + 1)
+                            draw.ellipse([dot_cx - r, dot_cy - r, dot_cx + r, dot_cy + r], fill=(*ind_rgb, 245), outline=(255, 255, 255, 185))
 
                 # Notification badge (if any)
                 badge_val = it.get("badge")
@@ -2304,7 +2503,13 @@ class DockWindow:
         if not flyout_open and not preview_open and self.config_mgr.get("appearance", "show_labels", True) and self.hovered_index is not None and not getattr(self, "is_dragging_item", False):
             if 0 <= self.hovered_index < len(self.items):
                 it = self.items[self.hovered_index]
-                if it.get("type") in ("app", "group", "action", "running_win"):
+                if it.get("type") == "battery":
+                    bi = self._get_battery_cached()
+                    pct = bi.get("percent", 100)
+                    chg = " (Cargando)" if bi.get("charging") else ""
+                    name = f"Batería: {pct}%{chg}" if bi.get("has_battery") else "Corriente AC"
+                    self._draw_tooltip_label(draw, name, self.item_rects[self.hovered_index], pill_y1, pill_y2, win_w, pos)
+                elif it.get("type") in ("app", "group", "action", "running_win"):
                     name = it.get("name", "")
                     if name:
                         self._draw_tooltip_label(draw, name, self.item_rects[self.hovered_index], pill_y1, pill_y2, win_w, pos)
@@ -2554,10 +2759,9 @@ class DockWindow:
                 user32.SetWindowPos(self.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
                 user32.SetWindowPos(self.hwnd, anchor, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
             else:
-                # Empty desktop / Windows 11 'Mostrar escritorio' raised WorkerW sheet:
-                # zero normal app windows exist above the desktop, so HWND_TOPMOST keeps the dock
-                # visible over DWM's raised WorkerW without overlapping any application window!
                 user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            if getattr(self, "media_capsule", None):
+                self.media_capsule.sync_z_order(self.is_revealed, anchor or 0)
         except Exception:
             pass
 
@@ -2580,6 +2784,8 @@ class DockWindow:
                     self._dirty = True
                 if self.is_revealed:
                     user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                    if getattr(self, "media_capsule", None):
+                        self.media_capsule.sync_z_order(True, 0)
                 else:
                     self._place_above_desktop_below_apps()
         except Exception:
@@ -2754,8 +2960,32 @@ class DockWindow:
                 hwnd = getattr(self.active_flyout, "top_hwnd", None) or user32.GetAncestor(self.active_flyout.window.winfo_id(), 2) or self.active_flyout.window.winfo_id()
                 rect = wintypes.RECT()
                 user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                if (rect.left - 14 <= pt.x <= rect.right + 14) and (rect.top - 14 <= pt.y <= rect.bottom + 14):
+                if (rect.left <= pt.x <= rect.right) and (rect.top <= pt.y <= rect.bottom):
                     cursor_over_flyout = True
+            except Exception:
+                pass
+
+        # Check if cursor is over Media Capsule or Custom Launcher
+        cursor_over_capsule = False
+        mc = getattr(self, "media_capsule", None)
+        if mc and mc.top_hwnd and user32.IsWindowVisible(mc.top_hwnd):
+            try:
+                crect = wintypes.RECT()
+                user32.GetWindowRect(mc.top_hwnd, ctypes.byref(crect))
+                if (crect.left - 4 <= pt.x <= crect.right + 4) and (crect.top - 4 <= pt.y <= crect.bottom + 4):
+                    cursor_over_capsule = True
+            except Exception:
+                pass
+
+        launcher_open = bool(self.active_launcher and self.active_launcher.window and self.active_launcher.window.winfo_exists())
+        cursor_over_launcher = False
+        if launcher_open:
+            try:
+                lhwnd = getattr(self.active_launcher, "top_hwnd", None) or self.active_launcher.window.winfo_id()
+                lrect = wintypes.RECT()
+                user32.GetWindowRect(lhwnd, ctypes.byref(lrect))
+                if (lrect.left <= pt.x <= lrect.right) and (lrect.top <= pt.y <= lrect.bottom):
+                    cursor_over_launcher = True
             except Exception:
                 pass
 
@@ -2791,15 +3021,19 @@ class DockWindow:
                 self.is_revealed = True
                 try:
                     user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE)
+                    if mc:
+                        mc.sync_z_order(True, 0)
                 except Exception:
                     pass
                 self._dirty = True
             self.last_leave_time = time.time()
-        elif cursor_over_flyout or cursor_over_preview or flyout_dragging or menu_open or cursor_over_menu or flyout_modal:
+        elif cursor_over_flyout or cursor_over_preview or cursor_over_capsule or cursor_over_launcher or flyout_dragging or menu_open or cursor_over_menu or flyout_modal:
             if not self.is_revealed:
                 self.is_revealed = True
                 try:
                     user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE)
+                    if mc:
+                        mc.sync_z_order(True, 0)
                 except Exception:
                     pass
                 self._dirty = True
@@ -2809,18 +3043,34 @@ class DockWindow:
             if cursor_over_preview or menu_open or cursor_over_menu:
                 self.preview_leave_time = 0
         else:
-            if self.active_flyout and self.active_flyout.window and self.active_flyout.window.winfo_exists():
-                if not cursor_over_dock and not menu_open and not cursor_over_menu and not flyout_modal:
-                    if self.flyout_leave_time == 0:
-                        self.flyout_leave_time = time.time()
-                    elif time.time() - self.flyout_leave_time > 0.45:
-                        try:
-                            self.active_flyout.close()
-                        except Exception:
-                            pass
-                        self.active_flyout = None
-                        self.flyout_leave_time = 0
-                else:
+            pass
+
+        # Requirement #11: Close Dockbar folders promptly whenever mouse leaves the folder (and its owner icon!)
+        if self.active_flyout and self.active_flyout.window and self.active_flyout.window.winfo_exists():
+            owner_id = self.active_flyout.group_item.get("id")
+            hover_on_owner = (
+                cursor_over_dock
+                and self.hovered_index is not None
+                and 0 <= self.hovered_index < len(self.items)
+                and self.items[self.hovered_index].get("id") == owner_id
+            )
+            hover_other_icon = (
+                cursor_over_dock
+                and self.hovered_index is not None
+                and not hover_on_owner
+            )
+            if cursor_over_flyout or flyout_dragging or menu_open or cursor_over_menu or flyout_modal or hover_on_owner:
+                self.flyout_leave_time = 0
+            else:
+                if self.flyout_leave_time == 0:
+                    self.flyout_leave_time = time.time()
+                close_delay = 0.06 if hover_other_icon else 0.14
+                if time.time() - self.flyout_leave_time >= close_delay:
+                    try:
+                        self.active_flyout.close()
+                    except Exception:
+                        pass
+                    self.active_flyout = None
                     self.flyout_leave_time = 0
 
         if self.active_preview and self.active_preview.window and self.active_preview.window.winfo_exists():
@@ -2839,7 +3089,8 @@ class DockWindow:
         # Instant click-outside detection (triggers immediately on mouse-DOWN outside dock/flyout/preview!)
         clicked_outside = (
             btn_just_pressed and not cursor_over_dock and not cursor_over_flyout
-            and not cursor_over_preview and not flyout_dragging and not at_edge
+            and not cursor_over_preview and not cursor_over_capsule and not cursor_over_launcher
+            and not flyout_dragging and not at_edge
             and not menu_open and not cursor_over_menu and not flyout_modal
         )
 
@@ -2873,12 +3124,20 @@ class DockWindow:
         if fg_switched_to_shell and not self._find_lowest_app_above_desktop():
             try:
                 user32.SetWindowPos(self.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                if mc:
+                    mc.sync_z_order(self.is_revealed, 0)
             except Exception:
                 pass
 
+        # Periodically refresh Dockbar battery item if present
+        if any(it.get("type") == "battery" for it in self.items):
+            if time.monotonic() - getattr(self, "_last_bat_draw_ts", 0.0) >= 4.0:
+                self._last_bat_draw_ts = time.monotonic()
+                self._dirty = True
+
         # 1. UNCONDITIONAL hide on click-outside, focus switch, or autohide delay
-        if autohide and self.is_revealed and not menu_open and not cursor_over_menu and not flyout_modal and not cursor_over_dock and not cursor_over_flyout and not cursor_over_preview and not flyout_dragging and not at_edge and not is_ole_dragging:
-            if clicked_outside or fg_changed_outside or (not btn_down_now and not flyout_open and not preview_open and (time.time() - self.last_leave_time > delay)):
+        if autohide and self.is_revealed and not menu_open and not cursor_over_menu and not flyout_modal and not cursor_over_dock and not cursor_over_flyout and not cursor_over_preview and not cursor_over_capsule and not cursor_over_launcher and not flyout_dragging and not at_edge and not is_ole_dragging:
+            if clicked_outside or fg_changed_outside or (not btn_down_now and not flyout_open and not preview_open and not launcher_open and (time.time() - self.last_leave_time > delay)):
                 self._tuck_behind_windows(reason="click" if clicked_outside else ("fg" if fg_changed_outside else "delay"))
         elif autohide and (not self.is_revealed):
             # Keep dock strictly behind apps when apps exist above desktop, OR keep visible above raised WorkerW during Show Desktop
@@ -3071,7 +3330,10 @@ class DockWindow:
                 elif it_type == "group":
                     self._open_group_flyout(item, self.item_rects[idx])
                 elif it_type == "action":
-                    self._execute_system_action(item.get("action_type"))
+                    self._execute_system_action(item.get("action_type"), anchor_rect=self.item_rects[idx])
+                elif it_type == "battery":
+                    self._trigger_launch_effect(item.get("id"))
+                    os.startfile("ms-settings:batterysaver")
                 elif it_type == "running_win":
                     self._activate_window(item.get("hwnd"))
 
@@ -3135,8 +3397,40 @@ class DockWindow:
         except Exception as e:
             print(f"[Dock] Error opening group flyout: {e}")
 
-    def _execute_system_action(self, action_type):
+    def _execute_system_action(self, action_type, anchor_rect=None):
         try:
+            if action_type == "app_launcher":
+                mode = self.config_mgr.get("general", "launcher_mode", "custom")
+                if mode == "windows":
+                    from app_launcher import open_windows_start_menu
+                    open_windows_start_menu()
+                else:
+                    from app_launcher import CustomAppLauncher
+                    if self.active_launcher and self.active_launcher.window and self.active_launcher.window.winfo_exists():
+                        try:
+                            self.active_launcher.close()
+                        except Exception:
+                            pass
+                        self.active_launcher = None
+                    else:
+                        pos = self.config_mgr.get("general", "position", "bottom")
+                        def _on_launch_done():
+                            self.active_launcher = None
+                        self.active_launcher = CustomAppLauncher(
+                            self.root,
+                            dock_pos=pos,
+                            on_close=_on_launch_done,
+                            on_launch_feedback=lambda: None,
+                        )
+                        if anchor_rect:
+                            dx = getattr(self, "dock_x", 0)
+                            dy = getattr(self, "dock_y", 0)
+                            ax = int(dx + (anchor_rect[0] + anchor_rect[2]) // 2)
+                            ay = int(dy + anchor_rect[1]) if pos == "bottom" else int(dy + anchor_rect[3])
+                            self.active_launcher.show(anchor_x=ax, anchor_y=ay)
+                        else:
+                            self.active_launcher.show()
+                return
             if action_type == "show_desktop":
                 try:
                     import win32com.client
@@ -3265,6 +3559,16 @@ class DockWindow:
                 if can_kill:
                     menu.add_command("Finalizar tarea", lambda it=item: self.terminate_item_processes(it), danger=True)
                 menu.add_separator()
+            elif item.get("type") == "battery":
+                menu.add_header("Widget de Batería en Dockbar")
+                cur_bs = (self.config_mgr.get("appearance", "dock_battery_style", "ring") or "ring").lower()
+                sec_bs = menu.add_section("Estilo de Batería en Dock", expanded=True)
+                for bst_id, bst_lbl in [("ring", "Anillo Circular"), ("bar", "Barra Clásica"), ("pill", "Píldora"), ("minimal", "Minimalista")]:
+                    sec_bs.add_command(bst_lbl, lambda s=bst_id: self._set_dock_battery_style(s), checked=(cur_bs == bst_id))
+                menu.add_command("Configuración de Energía Windows...", lambda: os.startfile("ms-settings:batterysaver"))
+                menu.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
+                menu.add_command("Quitar batería del Dock", lambda: self._remove_item(item), danger=True)
+                menu.add_separator()
             elif item.get("type") == "separator" and not item.get("is_dynamic"):
                 menu.add_command("Quitar separador", lambda: self._remove_item(item), danger=True)
                 menu.add_separator()
@@ -3273,6 +3577,8 @@ class DockWindow:
         clicked_empty = not (idx is not None and 0 <= idx < len(self.items))
         sec_add = menu.add_section("Añadir a la Dockbar", expanded=clicked_empty)
         sec_add.add_command("Añadir programa o archivo...", self._add_item_manually)
+        sec_add.add_command("Widget: Porcentaje de Batería", self._add_battery_dock_item)
+        sec_add.add_command("Botón: Lanzador de Apps (Inicio)", lambda: self._add_system_action("app_launcher", "Aplicaciones"))
         sec_add.add_command("Insertar separador al final", lambda: self._insert_separator(len(self.pinned_items)))
         sec_add.add_separator()
         sec_add.add_command("Botón: Ajustes del Dock", lambda: self._add_system_action("dock_settings", "Ajustes Dock"))
@@ -3358,6 +3664,17 @@ class DockWindow:
         self.reload_items()
         self.update_geometry()
 
+    def _add_battery_dock_item(self):
+        new_bat = {"type": "battery", "name": "Batería"}
+        self.config_mgr.add_item(new_bat)
+        self.reload_items()
+        self.update_geometry()
+
+    def _set_dock_battery_style(self, st_id):
+        self.config_mgr.set("appearance", "dock_battery_style", st_id)
+        self._bat_icon_cache = None
+        self._dirty = True
+
     def _restore_original_icon(self, item):
         restored = icon_extractor.restore_original_icon(item)
         item["icon_path"] = restored
@@ -3442,6 +3759,17 @@ class DockWindow:
         self._cancel_hover_group_timer()
         self._cancel_hover_preview_timer()
         self._close_active_preview()
+        if getattr(self, "media_capsule", None):
+            try:
+                self.media_capsule.hide()
+            except Exception:
+                pass
+        if getattr(self, "active_launcher", None):
+            try:
+                self.active_launcher.close()
+            except Exception:
+                pass
+            self.active_launcher = None
         if self.active_flyout:
             try:
                 self.active_flyout.close()
