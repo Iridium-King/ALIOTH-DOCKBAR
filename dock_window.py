@@ -724,7 +724,8 @@ class DockWindow:
                 if w["hwnd"] in top_pinned_hwnds:
                     continue
                 exe_b = w["exe_base"]
-                if exe_b in ignore_exes:
+                is_explorer_folder = (exe_b == "explorer.exe" and w["cls_l"] == "cabinetwclass")
+                if exe_b in ignore_exes and not is_explorer_folder:
                     continue
                 is_pwa = self._is_browser_pwa_window(w)
                 if exe_b == "applicationframehost.exe" and not w["aumid_l"] and not w["title"]:
@@ -733,6 +734,8 @@ class DockWindow:
                 matched_sub = folder_child_by_hwnd.get(w["hwnd"])
                 if matched_sub and matched_sub.get("id"):
                     dyn_key = f"sub:{matched_sub['id']}"
+                elif is_explorer_folder:
+                    dyn_key = f"folder:{w['hwnd']}"
                 elif is_pwa or exe_b == "applicationframehost.exe":
                     dyn_key = f"pwa:{w['aumid_l'] or w['title_l']}"
                 else:
@@ -748,13 +751,22 @@ class DockWindow:
                 else:
                     pref_icon = ""
                     disp_title = w["title"] or os.path.splitext(os.path.basename(w["exe_path"]))[0]
-                    for sfx in browser_suffixes:
-                        if disp_title.endswith(sfx) and len(disp_title) > len(sfx):
-                            disp_title = disp_title[:-len(sfx)].strip()
-                    if not is_pwa and " - " in disp_title and exe_b not in ("whatsapp.root.exe", "whatsapp.exe"):
-                        tail = disp_title.split(" - ")[-1].strip()
-                        if len(tail) >= 3:
-                            disp_title = tail
+                    if is_explorer_folder:
+                        for esfx in (" - Explorador de archivos", " - File Explorer", " y 1 pestaña más - Explorador de archivos"):
+                            if disp_title.endswith(esfx) and len(disp_title) > len(esfx):
+                                disp_title = disp_title[:-len(esfx)].strip()
+                        if " - Explorador de archivos" in disp_title:
+                            disp_title = disp_title.split(" - Explorador de archivos")[0].strip()
+                        elif " - File Explorer" in disp_title:
+                            disp_title = disp_title.split(" - File Explorer")[0].strip()
+                    else:
+                        for sfx in browser_suffixes:
+                            if disp_title.endswith(sfx) and len(disp_title) > len(sfx):
+                                disp_title = disp_title[:-len(sfx)].strip()
+                        if not is_pwa and " - " in disp_title and exe_b not in ("whatsapp.root.exe", "whatsapp.exe"):
+                            tail = disp_title.split(" - ")[-1].strip()
+                            if len(tail) >= 3:
+                                disp_title = tail
                     short_name = (disp_title[:25] + "…") if len(disp_title) > 27 else disp_title
                 open_windows.append((w["hwnd"], w["exe_path"], short_name, w.get("aumid", ""), dyn_key, pref_icon))
 
@@ -873,7 +885,7 @@ class DockWindow:
                 matches = [w for w in wins if w["hwnd"] == hwnd_it]
                 if not matches:
                     t_exe = os.path.basename((it.get("target") or "").strip()).lower()
-                    if t_exe:
+                    if t_exe and t_exe != "explorer.exe":
                         matches = [w for w in wins if w["exe_base"] == t_exe and not self._is_browser_pwa_window(w)]
             return matches, bool(matches)
 
