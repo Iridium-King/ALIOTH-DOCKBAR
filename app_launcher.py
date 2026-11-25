@@ -657,7 +657,7 @@ class CustomAppLauncher:
 
         total_rows = max(1, math.ceil(len(self.filtered_apps) / float(self.COLS)))
         info_txt = f"{len(self.filtered_apps)} apps  •  Clic derecho para opciones"
-        draw.text((w / 2.0, y_off + self.CARD_H - 22), info_txt, fill=(148, 163, 184, 185), font=resolve_styled_font("Segoe UI", 10), anchor="mm")
+        draw.text((w / 2.0, y_off + self.CARD_H - 22), info_txt, fill=(216, 226, 238, 235), font=resolve_styled_font("Segoe UI", 13, bold=True), anchor="mm")
         if total_rows > self.ROWS:
             tr_y1, tr_y2 = 78 + y_off, y_off + self.CARD_H - 44
             tr_h = tr_y2 - tr_y1
