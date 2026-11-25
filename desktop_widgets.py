@@ -1385,6 +1385,7 @@ class TodoListWidget(BaseDesktopWidget):
 
     def __init__(self, root, config_mgr, on_open_settings=None):
         super().__init__(root, config_mgr, "todo_list", default_x=24, default_y=360, default_w=320, default_h=260, on_open_settings=on_open_settings)
+        self.check_task_rects = []
         self.task_rects = []
         self.edit_task_rects = []
         self.del_task_rects = []
@@ -1405,15 +1406,13 @@ class TodoListWidget(BaseDesktopWidget):
         self._tip_job = None
         self._tip_tid = None
         self._tip_photo = None
-        # Task drag-and-drop reorder & double-click edit state
+        # Task drag-and-drop reorder state & variable-height row spans [(y1, y2, t_id), ...]
         self._drag_task_id = None
         self._drag_task_start_y = 0
         self._drag_task_cur_y = 0
         self._drag_task_active = False
         self._drag_task_target_slot = None
-        self._last_row_click_tid = None
-        self._last_row_click_ts = 0.0
-        self._row_geom = (0, 28, 0)  # (list_top_y, row_h, visible_count)
+        self._visible_row_spans = []
 
     def show(self):
         self._ensure_notebooks()
@@ -1526,6 +1525,9 @@ class TodoListWidget(BaseDesktopWidget):
         for (x1, y1, x2, y2, t_id) in self.edit_task_rects:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return ("edit_task", t_id)
+        for (x1, y1, x2, y2, t_id) in self.check_task_rects:
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return ("check_task", t_id)
         for (x1, y1, x2, y2, t_id) in self.task_rects:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return ("task", t_id)
@@ -1661,11 +1663,11 @@ class TodoListWidget(BaseDesktopWidget):
             self.hovered_zone = hz
             self._render()
         if not self._is_in_resize_zone(event.x, event.y):
-            if hz and hz[0] in ("btn", "tab", "edit_task", "del_task", "task"):
+            if hz and hz[0] in ("btn", "tab", "check_task", "edit_task", "del_task", "task"):
                 self._set_cursor("hand2")
             else:
                 self._set_cursor("")
-        if hz and hz[0] in ("task", "edit_task", "del_task"):
+        if hz and hz[0] in ("task", "check_task", "edit_task", "del_task"):
             t_id = hz[1]
             if t_id != self._tip_tid:
                 self._hide_task_tooltip()
@@ -1723,6 +1725,10 @@ class TodoListWidget(BaseDesktopWidget):
                     self._save_notebooks(notebooks, active_id=val)
                     self._render()
                 return
+            if kind == "check_task":
+                # Clicking strictly the checkbox completes / uncompletes the task
+                self._toggle_task(val)
+                return
             if kind == "edit_task":
                 self._open_edit_task_modal(val)
                 return
@@ -1730,7 +1736,7 @@ class TodoListWidget(BaseDesktopWidget):
                 self._delete_task(val)
                 return
             if kind == "task":
-                # Defer click vs drag-reorder until release / vertical drag > 6px
+                # Clicking task text opens Edit on release; dragging vertically > 6px reorders the task
                 self._drag_task_id = val
                 self._drag_task_start_y = event.y
                 self._drag_task_cur_y = event.y
@@ -1746,14 +1752,16 @@ class TodoListWidget(BaseDesktopWidget):
                 self._drag_task_active = True
                 self._hide_task_tooltip()
                 self._set_cursor("sb_v_double_arrow")
-            if self._drag_task_active:
-                list_top_y, row_h, vis_cnt = self._row_geom
-                if vis_cnt > 0 and row_h > 0:
-                    rel = (event.y - list_top_y) / float(row_h)
-                    slot = max(0, min(vis_cnt, int(round(rel))))
-                    if slot != self._drag_task_target_slot:
-                        self._drag_task_target_slot = slot
-                        self._render()
+            if self._drag_task_active and self._visible_row_spans:
+                # Find insertion slot across variable-height (1-3 line) rows
+                slot = len(self._visible_row_spans)
+                for idx_s, (ry1, ry2, _tid) in enumerate(self._visible_row_spans):
+                    if event.y < (ry1 + ry2) * 0.5:
+                        slot = idx_s
+                        break
+                if slot != self._drag_task_target_slot:
+                    self._drag_task_target_slot = slot
+                    self._render()
             return
         self._on_drag_move(event)
 
@@ -1772,18 +1780,8 @@ class TodoListWidget(BaseDesktopWidget):
                 else:
                     self._render()
                 return
-            # Simple click (not drag): check for double-click to edit, otherwise toggle done
-            now = time.monotonic()
-            if self._last_row_click_tid == t_id and (now - self._last_row_click_ts) <= 0.36:
-                self._last_row_click_tid = None
-                self._last_row_click_ts = 0.0
-                # Revert the first click's toggle so double-clicking opens Edit without flipping done state
-                self._toggle_task(t_id)
-                self._open_edit_task_modal(t_id)
-                return
-            self._last_row_click_tid = t_id
-            self._last_row_click_ts = now
-            self._toggle_task(t_id)
+            # Single click on task text opens Edit modal directly!
+            self._open_edit_task_modal(t_id)
             return
         self._on_drag_end(event)
 
@@ -1932,14 +1930,15 @@ class TodoListWidget(BaseDesktopWidget):
         is_edit = edit_task is not None
         sel_nb_id = [edit_nb_id or default_nb_id or active_nb["id"]]
         sel_tag = [(edit_task.get("tag") or "") if is_edit else ""]
+        sel_tag_color = [(edit_task.get("tag_color") or "") if is_edit else ""]
 
         modal = tk.Toplevel(self.root)
         self._active_modal = modal
         modal.overrideredirect(True)
         modal.attributes("-topmost", True)
         modal.configure(bg="#243044")
-        mw, mh = 540, 448
-        min_w, min_h = 440, 385
+        mw, mh = 560, 505
+        min_w, min_h = 460, 440
         self._position_modal(modal, mw, mh)
 
         outer = tk.Frame(modal, bg="#111622", highlightthickness=1, highlightbackground="#2b3952")
@@ -2038,24 +2037,75 @@ class TodoListWidget(BaseDesktopWidget):
             nb_btns[nid] = pill
         _refresh_nb_pills()
 
-        # Optional Priority / Color Tag selector (2 clean rows of 3 rounded pills — ZERO clipping!)
-        tk.Label(body, text="Etiqueta de color / prioridad (opcional)", fg="#cbd5e1", bg="#111622", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        # Optional Priority / Color Tag selector + Custom Color Picker
+        tk.Label(body, text="Etiqueta y color personalizado (opcional)", fg="#cbd5e1", bg="#111622", font=("Segoe UI", 9, "bold")).pack(anchor="w")
         tag_grid = tk.Frame(body, bg="#111622")
-        tag_grid.pack(fill=tk.X, pady=(6, 8))
+        tag_grid.pack(fill=tk.X, pady=(6, 6))
         tag_btns = {}
 
+        tag_color_swatches = [
+            "#ef4444", "#f97316", "#f59e0b", "#10b981", "#06b6d4",
+            "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#e11d48",
+        ]
+        swatch_canvases = {}
+
+        def _active_tag_color():
+            if sel_tag_color[0]:
+                return sel_tag_color[0]
+            for tk_id, _tl, tc in self.PRIORITY_TAGS:
+                if tk_id == sel_tag[0] and tk_id:
+                    return tc
+            return ""
+
         def _refresh_tag_pills():
+            cur_col = _active_tag_color()
             for t_key, _t_lbl, t_col in self.PRIORITY_TAGS:
                 b = tag_btns.get(t_key)
                 if not b:
                     continue
-                is_sel = (t_key == sel_tag[0])
+                is_sel = (t_key == sel_tag[0]) or (t_key == "" and sel_tag[0] == "" and not cur_col)
+                fill_c = (cur_col or t_col) if (is_sel and t_key) else (t_col if is_sel else "#182030")
                 b.set_pill_style(
-                    new_bg=t_col if is_sel else "#182030",
+                    new_bg=fill_c,
                     new_fg="#ffffff" if is_sel else "#cbd5e1",
-                    new_hover=t_col if is_sel else "#243047",
-                    new_border=t_col if is_sel else "#2c3a52",
+                    new_hover=fill_c if is_sel else "#243047",
+                    new_border=(cur_col or t_col) if is_sel else "#2c3a52",
                 )
+            for sw_hex, sw_c in swatch_canvases.items():
+                sw_c.delete("all")
+                is_sw_sel = (cur_col.lower() == sw_hex.lower())
+                if is_sw_sel:
+                    sw_c.create_oval(2, 2, 22, 22, fill=sw_hex, outline="#ffffff", width=2)
+                else:
+                    sw_c.create_oval(4, 4, 20, 20, fill=sw_hex, outline="#334155", width=1)
+            if cur_col:
+                color_preview.configure(bg=cur_col)
+            else:
+                color_preview.configure(bg="#263246")
+
+        def _select_tag(k):
+            sel_tag[0] = k
+            if not k:
+                sel_tag_color[0] = ""
+            else:
+                for tk_id, _tl, tc in self.PRIORITY_TAGS:
+                    if tk_id == k:
+                        sel_tag_color[0] = tc
+                        break
+            _refresh_tag_pills()
+
+        def _select_tag_color(hex_c):
+            sel_tag_color[0] = hex_c
+            if not sel_tag[0]:
+                sel_tag[0] = "custom"
+            _refresh_tag_pills()
+
+        def _pick_custom_tag_color():
+            from tkinter import colorchooser
+            init_c = _active_tag_color() or "#3b82f6"
+            res = colorchooser.askcolor(color=init_c, title="Color de la etiqueta", parent=modal)
+            if res and res[1]:
+                _select_tag_color(res[1])
 
         tag_row_cur = tk.Frame(tag_grid, bg="#111622")
         tag_row_cur.pack(fill=tk.X, pady=2)
@@ -2066,12 +2116,31 @@ class TodoListWidget(BaseDesktopWidget):
             txt = "Sin etiqueta" if not t_key else f"● {t_lbl}"
             tp = self._make_rounded_btn(
                 tag_row_cur, txt,
-                command=lambda k=t_key: (sel_tag.__setitem__(0, k), _refresh_tag_pills()),
+                command=lambda k=t_key: _select_tag(k),
                 bg="#182030", fg="#cbd5e1", hover_bg="#243047", border_col=t_col,
                 radius=11, pad_x=12, pad_y=5, font_spec=("Segoe UI", 9, "bold"), parent_bg="#111622"
             )
             tp.pack(side=tk.LEFT, padx=(0, 7))
             tag_btns[t_key] = tp
+
+        # Color palette row for tags (10 preset swatches + custom color wheel button)
+        col_row = tk.Frame(body, bg="#111622")
+        col_row.pack(fill=tk.X, pady=(4, 6))
+        tk.Label(col_row, text="Color:", fg="#94a3b8", bg="#111622", font=("Segoe UI", 8, "bold")).pack(side=tk.LEFT, padx=(0, 6))
+        for sw_hex in tag_color_swatches:
+            sw_c = tk.Canvas(col_row, width=24, height=24, bg="#111622", highlightthickness=0, bd=0, cursor="hand2")
+            sw_c.pack(side=tk.LEFT, padx=2)
+            sw_c.bind("<ButtonRelease-1>", lambda _e, hx=sw_hex: _select_tag_color(hx))
+            swatch_canvases[sw_hex] = sw_c
+
+        color_preview = tk.Frame(col_row, width=14, height=14, bg="#263246", highlightthickness=1, highlightbackground="#64748b")
+        color_preview.pack(side=tk.LEFT, padx=(8, 6))
+        pick_col_btn = self._make_rounded_btn(
+            col_row, "Más colores...", _pick_custom_tag_color,
+            bg="#1e293b", fg="#e2e8f0", hover_bg="#334155", border_col="#475569",
+            radius=10, pad_x=10, pad_y=4, font_spec=("Segoe UI", 8, "bold"), parent_bg="#111622"
+        )
+        pick_col_btn.pack(side=tk.LEFT)
         _refresh_tag_pills()
 
         # Footer action buttons + bottom-right resize grip
@@ -2083,13 +2152,14 @@ class TodoListWidget(BaseDesktopWidget):
             if not txt:
                 text_box.focus_set()
                 return "break"
-            tag_color = ""
+            tag_color = _active_tag_color()
             tag_label = ""
-            for tk_id, tl, tc in self.PRIORITY_TAGS:
+            for tk_id, tl, _tc in self.PRIORITY_TAGS:
                 if tk_id == sel_tag[0] and tk_id:
-                    tag_color = tc
                     tag_label = tl
                     break
+            if not tag_label and tag_color:
+                tag_label = "Etiqueta"
             target_nb_id = sel_nb_id[0]
             if is_edit:
                 orig_tid = edit_task.get("id")
@@ -2422,7 +2492,7 @@ class TodoListWidget(BaseDesktopWidget):
         auto_gr = bool(self.get_cfg("auto_grow", True))
 
         hz = self._hit_zone(event.x, event.y)
-        if hz and hz[0] in ("task", "edit_task", "del_task"):
+        if hz and hz[0] in ("task", "check_task", "edit_task", "del_task"):
             tid = hz[1]
             t_obj = self._task_map.get(tid)
             if t_obj:
@@ -2465,6 +2535,47 @@ class TodoListWidget(BaseDesktopWidget):
         except Exception as e:
             print(f"[TodoWidget] Inbox ingest error: {e}")
 
+    @staticmethod
+    def _wrap_task_lines(draw, text, font, max_w, max_lines=3):
+        """Word-wraps a task description up to `max_lines` lines, ellipsizing only if it exceeds `max_lines`."""
+        max_w = max(40.0, float(max_w))
+        paragraphs = (text or "").replace("\r\n", "\n").split("\n")
+        lines = []
+        for para in paragraphs:
+            words = para.split()
+            if not words:
+                continue
+            cur = ""
+            for wd in words:
+                cand = (cur + " " + wd).strip() if cur else wd
+                if draw.textlength(cand, font=font) <= max_w:
+                    cur = cand
+                else:
+                    if cur:
+                        lines.append(cur)
+                    if draw.textlength(wd, font=font) <= max_w:
+                        cur = wd
+                    else:
+                        chunk = ""
+                        for ch in wd:
+                            if draw.textlength(chunk + ch, font=font) > max_w and chunk:
+                                lines.append(chunk)
+                                chunk = ch
+                            else:
+                                chunk += ch
+                        cur = chunk
+            if cur:
+                lines.append(cur)
+        if not lines:
+            return [""]
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            last = lines[-1]
+            while len(last) > 1 and draw.textlength(last + "…", font=font) > max_w:
+                last = last[:-1]
+            lines[-1] = last.rstrip() + "…"
+        return lines
+
     def _render(self):
         if not self.window or not self.canvas:
             return
@@ -2477,10 +2588,12 @@ class TodoListWidget(BaseDesktopWidget):
         pend_count = len(all_tasks) - done_count
 
         if self._is_collapsed_view():
+            self.check_task_rects = []
             self.task_rects = []
             self.edit_task_rects = []
             self.del_task_rects = []
             self.tab_rects = []
+            self._visible_row_spans = []
             self.add_btn_rect = (0, 0, 0, 0)
             self.gear_btn_rect = (0, 0, 0, 0)
             self.clear_btn_rect = (0, 0, 0, 0)
@@ -2500,17 +2613,37 @@ class TodoListWidget(BaseDesktopWidget):
         show_completed = bool(self.get_cfg("show_completed", False))
         filtered_tasks = [t for t in all_tasks if bool(t.get("done", False)) == show_completed]
 
-        row_h = max(int(22 * s), int(28 * s * sp))
-        header_block_h = int(68 * s)
+        base_row_h = max(int(24 * s), int(28 * s * sp))
+        line_h = max(int(14 * s), int(15.5 * s * self._get_font_scale()))
+        header_block_h = int(70 * s)
         fw, fh = self._compute_full_dims()
         w = self.win_w if self.is_resizing else fw
 
-        # Auto-elongation (auto_grow) so the widget expands vertically with tasks up to max_auto_h, then scrolls
+        f_tab = self._get_styled_font(9.5 * s, bold_default=True)
+        f_item = self._get_styled_font(11.5 * s, bold_default=False)
+        f_clr = self._get_styled_font(9.0 * s, bold_default=True)
+        f_tag = self._get_styled_font(8.2 * s, bold_default=True)
+
+        pad_x = int(14 * s)
+        cb_s = max(12, int(14 * s))
+        action_gutter = int(42 * s)
+        # Pre-measure wrapped lines (up to 3 lines/task) to compute accurate row heights & auto-grow height
+        tmp_im = Image.new("RGBA", (4, 4), (0, 0, 0, 0))
+        tmp_d = ImageDraw.Draw(tmp_im, "RGBA")
+        est_txt_w = max(60, w - pad_x * 2 - cb_s - action_gutter - int(18 * s))
+        row_pad_v = max(6, int(8 * s * min(1.3, sp)))
+        pre_heights = []
+        for t in filtered_tasks:
+            t_lines = self._wrap_task_lines(tmp_d, t.get("text", ""), f_item, est_txt_w, max_lines=3)
+            rh = max(base_row_h, len(t_lines) * line_h + row_pad_v)
+            pre_heights.append(rh)
+
+        # Auto-elongation (auto_grow) so the widget expands vertically with multi-line tasks up to max_auto_h, then scrolls
         if not self.is_resizing and bool(self.get_cfg("auto_grow", True)):
             sh = self.root.winfo_screenheight()
-            max_auto_h = min(sh - 96, int(float(self.get_cfg("max_auto_h", 520) or 520) * self.dpi_scale))
-            min_auto_h = max(int(128 * s), header_block_h + row_h + int(20 * s))
-            desired_h = header_block_h + max(1, len(filtered_tasks)) * row_h + int(16 * s)
+            max_auto_h = min(sh - 96, int(float(self.get_cfg("max_auto_h", 540) or 540) * self.dpi_scale))
+            min_auto_h = max(int(130 * s), header_block_h + base_row_h + int(20 * s))
+            desired_h = header_block_h + (sum(pre_heights) if pre_heights else base_row_h) + int(18 * s)
             h = max(min_auto_h, min(max_auto_h, desired_h))
         else:
             h = self.win_h if self.is_resizing else fh
@@ -2521,11 +2654,6 @@ class TodoListWidget(BaseDesktopWidget):
         composite = self._build_card_surface(w, h, accent_rgb=nb_rgb)
         draw = ImageDraw.Draw(composite, "RGBA")
 
-        f_tab = self._get_styled_font(9.5 * s, bold_default=True)
-        f_item = self._get_styled_font(11.5 * s, bold_default=False)
-        f_clr = self._get_styled_font(9.0 * s, bold_default=True)
-
-        pad_x = int(14 * s)
         btn_s = max(20, int(23 * s))
         tab_h = max(20, int(23 * s))
         row1_top = int(10 * s)
@@ -2534,28 +2662,13 @@ class TodoListWidget(BaseDesktopWidget):
         tab_y1 = row1_top
         tab_y2 = tab_y1 + tab_h
 
-        # Top-right header buttons: [⚙] [—] [+] (with emerald GREEN '+' button!)
-        # 1. '+' Add Task button (Vibrant Emerald Green)
-        bx2 = w - pad_x
-        bx1 = bx2 - btn_s
-        self.add_btn_rect = (bx1, by1, bx2, by2)
-        hov_add = (self.hovered_zone == ("btn", "add"))
-        alpha_rounded_rect(
-            composite, [bx1, by1, bx2, by2], radius=int(7 * s),
-            fill=(16, 185, 129, 245 if hov_add else 205),
-            outline=(110, 231, 183, 245 if hov_add else 185), width=1
-        )
-        acx, acy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
-        arm = max(4.0, btn_s * 0.24)
-        alpha_line(composite, [(acx - arm, acy), (acx + arm, acy)], fill=(255, 255, 255, 255), width=max(2, int(2.2 * s)))
-        alpha_line(composite, [(acx, acy - arm), (acx, acy + arm)], fill=(255, 255, 255, 255), width=max(2, int(2.2 * s)))
-
-        # 2. '—' Minimize button right on the widget header
-        mx2 = bx1 - int(5 * s)
+        # Top-right header buttons: [⚙] [—] (the green '+' Nueva Tarea button moved to Row 2 left!)
+        # 1. '—' Minimize button at far right
+        mx2 = w - pad_x
         mx1 = mx2 - btn_s
         self._draw_min_button(composite, draw, mx1, by1, mx2, by2, is_collapsed=False)
 
-        # 3. '⚙' Notebook Settings button right on the widget header
+        # 2. '⚙' Notebook Settings button next to Minimize
         gx2 = mx1 - int(5 * s)
         gx1 = gx2 - btn_s
         self.gear_btn_rect = (gx1, by1, gx2, by2)
@@ -2639,45 +2752,71 @@ class TodoListWidget(BaseDesktopWidget):
         else:
             self.quick_tab_btn_rect = (0, 0, 0, 0)
 
-        # Row 2 (Compact reorganized sub-bar): Centered [✓ Ver completados (N)] + right-aligned [Limpiar (N)]
+        # Row 2 (Compact reorganized action bar):
+        # Left: Green [+ Agregar nueva tarea]  |  Center: [✓ Ver completados (N)]  |  Right: [Limpiar (N)]
         sub_y1 = max(by2, tab_y2) + int(6 * s)
-        sub_h = max(19, int(21 * s))
+        sub_h = max(21, int(23 * s))
         sub_y2 = sub_y1 + sub_h
         sub_cy = (sub_y1 + sub_y2) / 2.0
 
+        # 1) Green '+ Nueva tarea' button on Row 2 Left
+        add_lbl = "Nueva tarea"
+        add_ico_w = int(13 * s)
+        add_w = int(draw.textbbox((0, 0), add_lbl, font=f_clr)[2]) + add_ico_w + int(18 * s)
+        ax1 = pad_x
+        ax2 = min(w - pad_x, ax1 + add_w)
+        self.add_btn_rect = (ax1, sub_y1, ax2, sub_y2)
+        hov_add = (self.hovered_zone == ("btn", "add"))
+        alpha_rounded_rect(
+            composite, [ax1, sub_y1, ax2, sub_y2], radius=int(sub_h // 2),
+            fill=(16, 185, 129, 245 if hov_add else 205),
+            outline=(110, 231, 183, 245 if hov_add else 190), width=1
+        )
+        ap_cx = ax1 + int(11 * s)
+        ap_arm = max(3.2, 3.8 * s)
+        alpha_line(composite, [(ap_cx - ap_arm, sub_cy), (ap_cx + ap_arm, sub_cy)], fill=(255, 255, 255, 255), width=max(2, int(2.0 * s)))
+        alpha_line(composite, [(ap_cx, sub_cy - ap_arm), (ap_cx, sub_cy + ap_arm)], fill=(255, 255, 255, 255), width=max(2, int(2.0 * s)))
+        draw.text((ap_cx + int(8 * s), sub_cy), add_lbl, fill=(255, 255, 255, 255), font=f_clr, anchor="lm")
+
+        # 2) Optional 'Limpiar (N)' on Row 2 Right
         clr_w = 0
         if done_count > 0:
             clr_lbl = f"Limpiar ({done_count})"
             clr_w = int(draw.textbbox((0, 0), clr_lbl, font=f_clr)[2]) + int(16 * s)
 
+        # 3) Centered 'Ver completados (N)' / 'Ver pendientes (N)' between Left & Right pills
         flt_lbl = f"Ver pendientes ({pend_count})" if show_completed else f"Ver completados ({done_count})"
         ico_gap = int(14 * s)
         flt_w = int(draw.textbbox((0, 0), flt_lbl, font=f_clr)[2]) + ico_gap + int(18 * s)
+        min_flt_x1 = ax2 + int(8 * s)
         max_flt_x2 = (w - pad_x - clr_w - int(8 * s)) if clr_w > 0 else (w - pad_x)
-        # Center the completed toggle pill cleanly; shift left only if needed to avoid colliding with Limpiar
-        fx1 = max(pad_x, int((w - flt_w) / 2.0))
+        fx1 = int((w - flt_w) / 2.0)
+        if fx1 < min_flt_x1:
+            fx1 = min_flt_x1
         if fx1 + flt_w > max_flt_x2:
-            fx1 = max(pad_x, max_flt_x2 - flt_w)
+            fx1 = max(min_flt_x1, max_flt_x2 - flt_w)
         fx2 = min(max_flt_x2, fx1 + flt_w)
-        self.filter_done_rect = (fx1, sub_y1, fx2, sub_y2)
-        hov_flt = (self.hovered_zone == ("btn", "toggle_done_view"))
-        flt_fill = (16, 185, 129, 105 if hov_flt else 74) if show_completed else (255, 255, 255, 34 if hov_flt else 18)
-        flt_out = (52, 211, 153, 225) if show_completed else (148, 163, 184, 95)
-        flt_fg = (236, 253, 245, 255) if show_completed else (226, 232, 240, 240)
-        alpha_rounded_rect(composite, [fx1, sub_y1, fx2, sub_y2], radius=int(sub_h // 2), fill=flt_fill, outline=flt_out, width=1)
-        # Crisp vector checkmark / back-arrow icon (zero missing-glyph tofu boxes!)
-        ix = fx1 + int(10 * s)
-        if show_completed:
-            alpha_line(composite, [(ix + 4 * s, sub_cy - 3.5 * s), (ix, sub_cy), (ix + 4 * s, sub_cy + 3.5 * s)], fill=flt_fg, width=max(1, int(1.8 * s)))
-            alpha_line(composite, [(ix, sub_cy), (ix + 7 * s, sub_cy)], fill=flt_fg, width=max(1, int(1.8 * s)))
+        if fx2 - fx1 >= int(52 * s):
+            self.filter_done_rect = (fx1, sub_y1, fx2, sub_y2)
+            hov_flt = (self.hovered_zone == ("btn", "toggle_done_view"))
+            flt_fill = (16, 185, 129, 105 if hov_flt else 74) if show_completed else (255, 255, 255, 34 if hov_flt else 18)
+            flt_out = (52, 211, 153, 225) if show_completed else (148, 163, 184, 95)
+            flt_fg = (236, 253, 245, 255) if show_completed else (226, 232, 240, 240)
+            alpha_rounded_rect(composite, [fx1, sub_y1, fx2, sub_y2], radius=int(sub_h // 2), fill=flt_fill, outline=flt_out, width=1)
+            ix = fx1 + int(10 * s)
+            if show_completed:
+                alpha_line(composite, [(ix + 4 * s, sub_cy - 3.5 * s), (ix, sub_cy), (ix + 4 * s, sub_cy + 3.5 * s)], fill=flt_fg, width=max(1, int(1.8 * s)))
+                alpha_line(composite, [(ix, sub_cy), (ix + 7 * s, sub_cy)], fill=flt_fg, width=max(1, int(1.8 * s)))
+            else:
+                alpha_line(composite, [(ix, sub_cy + 0.5 * s), (ix + 2.8 * s, sub_cy + 3.2 * s), (ix + 7.2 * s, sub_cy - 3.0 * s)], fill=(52, 211, 153, 250), width=max(1, int(2.0 * s)))
+            draw.text((ix + ico_gap - int(2 * s), sub_cy), flt_lbl, fill=flt_fg, font=f_clr, anchor="lm")
         else:
-            alpha_line(composite, [(ix, sub_cy + 0.5 * s), (ix + 2.8 * s, sub_cy + 3.2 * s), (ix + 7.2 * s, sub_cy - 3.0 * s)], fill=(52, 211, 153, 250), width=max(1, int(2.0 * s)))
-        draw.text((ix + ico_gap - int(2 * s), sub_cy), flt_lbl, fill=flt_fg, font=f_clr, anchor="lm")
+            self.filter_done_rect = (0, 0, 0, 0)
 
         if done_count > 0:
             cx2 = w - pad_x
             cx1 = cx2 - clr_w
-            if cx1 > fx2 + int(6 * s):
+            if cx1 > max(ax2, fx2) + int(6 * s):
                 self.clear_btn_rect = (cx1, sub_y1, cx2, sub_y2)
                 hov_clr = (self.hovered_zone == ("btn", "clear"))
                 alpha_rounded_rect(
@@ -2694,62 +2833,96 @@ class TodoListWidget(BaseDesktopWidget):
         div_y = sub_y2 + int(6 * s)
         alpha_line(composite, [(pad_x, div_y), (w - pad_x, div_y)], fill=(*nb_rgb, 65), width=1)
 
-        # Tasks list area
+        # Tasks list area (supports up to 3 wrapped lines per task with variable row heights!)
+        self.check_task_rects = []
         self.task_rects = []
         self.edit_task_rects = []
         self.del_task_rects = []
+        self._visible_row_spans = []
         self.scroll_up_rect = (0, 0, 0, 0)
         self.scroll_dn_rect = (0, 0, 0, 0)
         list_top_y = div_y + int(5 * s)
-        cur_y = list_top_y
-        cb_s = max(12, int(14 * s))
-        max_rows = max(1, int((h - cur_y - int(8 * s)) // row_h))
-        needs_scroll = len(filtered_tasks) > max_rows
-        if self.scroll_offset > max(0, len(filtered_tasks) - max_rows):
-            self.scroll_offset = max(0, len(filtered_tasks) - max_rows)
+        avail_list_h = max(base_row_h, h - list_top_y - int(8 * s))
 
-        visible_tasks = filtered_tasks[self.scroll_offset: self.scroll_offset + max_rows]
-        self._row_geom = (list_top_y, row_h, len(visible_tasks))
+        # Determine if scrolling is needed
+        total_h_all = sum(pre_heights)
+        needs_scroll = total_h_all > avail_list_h
         scroll_gutter = int(16 * s) if needs_scroll else 0
-        action_gutter = int(42 * s)
-        avail_txt_w = max(40, w - pad_x * 2 - cb_s - action_gutter - scroll_gutter)
+        avail_txt_w = max(48, w - pad_x * 2 - cb_s - action_gutter - scroll_gutter)
 
-        for t in visible_tasks:
+        # Exact per-task layout (wrapped up to 3 lines + optional colored tag badge)
+        row_layouts = []
+        for t in filtered_tasks:
+            t_tag_col = (t.get("tag_color") or "").strip()
+            t_tag_lbl = (t.get("tag_label") or "").strip()
+            tag_pill_w = 0
+            if t_tag_col and t_tag_lbl:
+                tag_pill_w = int(draw.textlength(t_tag_lbl, font=f_tag)) + int(12 * s) + int(6 * s)
+            t_lines = self._wrap_task_lines(draw, t.get("text", ""), f_item, max(48, avail_txt_w - tag_pill_w), max_lines=3)
+            rh = max(base_row_h, len(t_lines) * line_h + row_pad_v)
+            row_layouts.append((t, t_lines, rh, tag_pill_w))
+
+        total_h_exact = sum(r[2] for r in row_layouts)
+        needs_scroll = total_h_exact > avail_list_h
+        if not needs_scroll:
+            self.scroll_offset = 0
+        else:
+            # Clamp scroll_offset so last item remains reachable
+            max_off = max(0, len(row_layouts) - 1)
+            self.scroll_offset = max(0, min(max_off, self.scroll_offset))
+
+        visible_layouts = []
+        acc_h = 0
+        for r_item in row_layouts[self.scroll_offset:]:
+            if visible_layouts and (acc_h + r_item[2]) > avail_list_h:
+                break
+            visible_layouts.append(r_item)
+            acc_h += r_item[2]
+
+        cur_y = list_top_y
+        for (t, t_lines, rh, tag_pill_w) in visible_layouts:
             is_done = t.get("done", False)
-            t_text = t.get("text", "")
             t_id = t.get("id", "")
-            tag_hex = t.get("tag_color", "")
+            tag_hex = (t.get("tag_color") or "").strip()
+            tag_lbl = (t.get("tag_label") or "").strip()
             is_drag_src = self._drag_task_active and (self._drag_task_id == t_id)
-            is_row_hov = (not self._drag_task_active) and (self.hovered_zone in (("task", t_id), ("edit_task", t_id), ("del_task", t_id)))
+            is_row_hov = (not self._drag_task_active) and (
+                self.hovered_zone in (("task", t_id), ("check_task", t_id), ("edit_task", t_id), ("del_task", t_id))
+            )
 
             row_right = w - pad_x - scroll_gutter
             if is_drag_src:
                 alpha_rounded_rect(
-                    composite, [pad_x - int(4 * s), cur_y + 1, row_right + int(2 * s), cur_y + row_h - 1],
+                    composite, [pad_x - int(4 * s), cur_y + 1, row_right + int(2 * s), cur_y + rh - 1],
                     radius=int(6 * s), fill=(*nb_rgb, 48), outline=(*nb_rgb, 155), width=1
                 )
             elif is_row_hov:
                 alpha_rounded_rect(
-                    composite, [pad_x - int(4 * s), cur_y + 1, row_right + int(2 * s), cur_y + row_h - 1],
+                    composite, [pad_x - int(4 * s), cur_y + 1, row_right + int(2 * s), cur_y + rh - 1],
                     radius=int(6 * s), fill=(255, 255, 255, 22)
                 )
 
-            if tag_hex:
-                tc_rgb = _hex_to_rgb(tag_hex, nb_rgb)
-                bar_top = cur_y + max(3, (row_h - cb_s) // 2)
+            tc_rgb = _hex_to_rgb(tag_hex, nb_rgb) if tag_hex else None
+            if tc_rgb is not None:
+                bar_top = cur_y + int(5 * s)
+                bar_bot = max(bar_top + cb_s, cur_y + rh - int(5 * s))
                 draw.rounded_rectangle(
-                    [pad_x - int(5 * s), bar_top, pad_x - int(2 * s), bar_top + cb_s],
-                    radius=2, fill=(*tc_rgb, 235 if not is_done else 110)
+                    [pad_x - int(6 * s), bar_top, pad_x - int(2 * s), bar_bot],
+                    radius=2, fill=(*tc_rgb, 240 if not is_done else 120)
                 )
 
-            cb_y1 = cur_y + (row_h - cb_s) // 2
+            # Align checkbox vertically with the first line (centered for 1-line rows)
+            first_line_cy = cur_y + (rh / 2.0 if len(t_lines) == 1 else (row_pad_v / 2.0 + line_h / 2.0))
+            cb_y1 = int(round(first_line_cy - cb_s / 2.0))
             cb_rect = [pad_x, cb_y1, pad_x + cb_s, cb_y1 + cb_s]
+            hov_cb = (self.hovered_zone == ("check_task", t_id))
             if is_done:
-                draw.rounded_rectangle(cb_rect, radius=max(3, int(4 * s)), fill=(16, 185, 129, 235))
+                draw.rounded_rectangle(cb_rect, radius=max(3, int(4 * s)), fill=(16, 185, 129, 245 if hov_cb else 230))
                 alpha_line(composite, [(pad_x + cb_s * 0.22, cb_y1 + cb_s * 0.52), (pad_x + cb_s * 0.44, cb_y1 + cb_s * 0.76), (pad_x + cb_s * 0.78, cb_y1 + cb_s * 0.26)], fill=(255, 255, 255, 255), width=max(2, int(2 * s)))
             else:
-                out_c = (*nb_rgb, 220) if is_row_hov else (148, 163, 184, 205)
-                draw.rounded_rectangle(cb_rect, radius=max(3, int(4 * s)), fill=(22, 30, 46, 215), outline=out_c, width=1)
+                out_c = (52, 211, 153, 245) if hov_cb else ((*(tc_rgb or nb_rgb), 225) if is_row_hov else (148, 163, 184, 205))
+                fill_cb = (16, 185, 129, 45) if hov_cb else (22, 30, 46, 215)
+                draw.rounded_rectangle(cb_rect, radius=max(3, int(4 * s)), fill=fill_cb, outline=out_c, width=1)
 
             text_x = pad_x + cb_s + int(8 * s)
             if is_drag_src:
@@ -2759,19 +2932,32 @@ class TodoListWidget(BaseDesktopWidget):
             else:
                 text_color = (248, 250, 252, 255)
 
-            disp_txt = t_text
-            while disp_txt and draw.textlength(disp_txt, font=f_item) > avail_txt_w:
-                disp_txt = disp_txt[:-1]
-            if disp_txt != t_text:
-                disp_txt = disp_txt.rstrip() + "…"
+            # Optional colored tag pill badge right before task text
+            if tc_rgb is not None and tag_lbl:
+                tp_h = max(14, int(15 * s))
+                tp_w = int(draw.textlength(tag_lbl, font=f_tag)) + int(10 * s)
+                tp_y1 = int(round(first_line_cy - tp_h / 2.0))
+                tp_y2 = tp_y1 + tp_h
+                alpha_rounded_rect(
+                    composite, [text_x, tp_y1, text_x + tp_w, tp_y2],
+                    radius=tp_h // 2, fill=(*tc_rgb, 68 if not is_done else 38),
+                    outline=(*tc_rgb, 215 if not is_done else 110), width=1
+                )
+                draw.text((text_x + tp_w / 2.0, (tp_y1 + tp_y2) / 2.0), tag_lbl, fill=(248, 250, 252, 250 if not is_done else 160), font=f_tag, anchor="mm")
+                text_x += tp_w + int(6 * s)
 
-            ty_mid = cur_y + row_h / 2.0
-            draw.text((text_x, ty_mid), disp_txt, fill=text_color, font=f_item, anchor="lm")
-            if is_done and disp_txt:
-                tw_done = draw.textlength(disp_txt, font=f_item)
-                draw.line([(text_x, ty_mid), (text_x + tw_done, ty_mid)], fill=(148, 163, 184, 195), width=1)
+            # Render up to 3 wrapped lines cleanly
+            total_text_h = len(t_lines) * line_h
+            block_y0 = cur_y + (rh - total_text_h) / 2.0
+            for li, ln_txt in enumerate(t_lines):
+                ly_mid = block_y0 + li * line_h + line_h / 2.0
+                draw.text((text_x, ly_mid), ln_txt, fill=text_color, font=f_item, anchor="lm")
+                if is_done and ln_txt:
+                    tw_done = draw.textlength(ln_txt, font=f_item)
+                    draw.line([(text_x, ly_mid), (text_x + tw_done, ly_mid)], fill=(148, 163, 184, 195), width=1)
 
-            # Row hover action icons: crisp vector Edit Pencil + vector Delete '×' (no tofu boxes!)
+            # Row hover action icons: crisp vector Edit Pencil + vector Delete '×'
+            ty_mid = first_line_cy
             btn_w_r = max(16, int(18 * s))
             dx2 = row_right
             dx1 = dx2 - btn_w_r
@@ -2779,7 +2965,7 @@ class TodoListWidget(BaseDesktopWidget):
             ex1 = ex2 - btn_w_r
             if is_row_hov:
                 # Subtle 6-dot drag grip on far left margin
-                gx_d = pad_x - int(9 * s)
+                gx_d = pad_x - int(10 * s)
                 if gx_d >= 3:
                     for dy_g in (-3.5 * s, 0, 3.5 * s):
                         alpha_ellipse(composite, [gx_d - 1.2, ty_mid + dy_g - 1.2, gx_d + 1.2, ty_mid + dy_g + 1.2], fill=(148, 163, 184, 150))
@@ -2794,7 +2980,7 @@ class TodoListWidget(BaseDesktopWidget):
                 pr = max(3.5, 4.2 * s)
                 alpha_line(composite, [(ecx - pr, ecy + pr), (ecx + pr * 0.85, ecy - pr * 0.85)], fill=ed_col, width=max(2, int(2.1 * s)))
                 alpha_line(composite, [(ecx - pr - 1, ecy + pr + 1), (ecx - pr + 2, ecy + pr)], fill=ed_col, width=max(1, int(1.6 * s)))
-                self.edit_task_rects.append((ex1 - 1, cur_y, ex2 + 1, cur_y + row_h, t_id))
+                self.edit_task_rects.append((ex1 - 1, cur_y, ex2 + 1, cur_y + rh, t_id))
 
                 # Delete '×' button
                 hov_del = (self.hovered_zone == ("del_task", t_id))
@@ -2805,15 +2991,25 @@ class TodoListWidget(BaseDesktopWidget):
                 xr = max(3.2, 3.8 * s)
                 alpha_line(composite, [(dcx - xr, dcy - xr), (dcx + xr, dcy + xr)], fill=del_col, width=max(1, int(1.9 * s)))
                 alpha_line(composite, [(dcx + xr, dcy - xr), (dcx - xr, dcy + xr)], fill=del_col, width=max(1, int(1.9 * s)))
-                self.del_task_rects.append((dx1 - 1, cur_y, dx2 + 2, cur_y + row_h, t_id))
+                self.del_task_rects.append((dx1 - 1, cur_y, dx2 + 2, cur_y + rh, t_id))
 
-            self.task_rects.append((pad_x - 2, cur_y, row_right, cur_y + row_h, t_id))
+            # Separate hitboxes: checkbox completes/uncompletes; text area edits on click / reorders on drag!
+            cb_hit_x2 = pad_x + cb_s + int(5 * s)
+            self.check_task_rects.append((pad_x - 3, cur_y, cb_hit_x2, cur_y + rh, t_id))
+            self.task_rects.append((cb_hit_x2 + 1, cur_y, row_right, cur_y + rh, t_id))
+            self._visible_row_spans.append((cur_y, cur_y + rh, t_id))
             self._task_map[t_id] = t
-            cur_y += row_h
+            cur_y += rh
 
-        # Drag-and-drop reorder insertion bar indicator
-        if self._drag_task_active and self._drag_task_target_slot is not None and visible_tasks:
-            ins_y = list_top_y + int(self._drag_task_target_slot * row_h)
+        # Drag-and-drop reorder insertion bar indicator (supports variable 1-3 line heights)
+        if self._drag_task_active and self._drag_task_target_slot is not None and self._visible_row_spans:
+            slot = self._drag_task_target_slot
+            if slot <= 0:
+                ins_y = self._visible_row_spans[0][0]
+            elif slot >= len(self._visible_row_spans):
+                ins_y = self._visible_row_spans[-1][1]
+            else:
+                ins_y = self._visible_row_spans[slot][0]
             ins_x1 = pad_x
             ins_x2 = w - pad_x - scroll_gutter
             alpha_line(composite, [(ins_x1, ins_y), (ins_x2, ins_y)], fill=(16, 185, 129, 250), width=max(2, int(2.5 * s)))
@@ -2838,14 +3034,15 @@ class TodoListWidget(BaseDesktopWidget):
             track_y1 = top_s + arr_h + 3
             track_y2 = bot_s - arr_h - 3
             track_h = max(10, track_y2 - track_y1)
-            thumb_h = max(10, int(track_h * (max_rows / float(len(filtered_tasks)))))
-            max_off = max(1, len(filtered_tasks) - max_rows)
-            thumb_y = track_y1 + int((track_h - thumb_h) * (self.scroll_offset / float(max_off)))
+            vis_cnt = max(1, len(visible_layouts))
+            thumb_h = max(10, int(track_h * (vis_cnt / float(max(1, len(row_layouts))))))
+            max_off = max(1, len(row_layouts) - vis_cnt)
+            thumb_y = track_y1 + int((track_h - thumb_h) * min(1.0, self.scroll_offset / float(max_off)))
             tx_mid = int((sb_x1 + sb_x2) // 2)
             draw.rounded_rectangle([tx_mid - 2, thumb_y, tx_mid + 2, thumb_y + thumb_h], radius=2, fill=(*nb_rgb, 210))
 
         if not filtered_tasks:
-            empty_msg = "No hay tareas completadas aún." if show_completed else "Sin pendientes aquí. Clic en '+' para crear."
+            empty_msg = "No hay tareas completadas aún." if show_completed else "Sin pendientes aquí. Clic en '+ Nueva tarea' para crear."
             draw.text((pad_x, cur_y + int(6 * s)), empty_msg, fill=(148, 163, 184, 215), font=f_item)
 
         self._render_to_canvas(composite, w, h)
