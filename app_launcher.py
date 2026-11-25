@@ -193,6 +193,9 @@ class CustomAppLauncher:
         self.scroll_row = 0
         self._bg_cache = None
         self._check_job = None
+        self._caret_job = None
+        self._caret_visible = True
+        self._clear_btn_rect = None
         self._closed = False
         self._loading_icons = set()
         self.opened_ts = 0.0
@@ -297,10 +300,24 @@ class CustomAppLauncher:
         self.window.bind("<Escape>", lambda _e: self.close())
         self.search_entry.bind("<Escape>", lambda _e: self.close())
         self.search_entry.bind("<Return>", lambda _e: self._launch_first())
+        self.search_entry.bind("<KeyRelease>", lambda _e: self._on_caret_activity())
+        self.search_entry.bind("<ButtonRelease-1>", lambda _e: self._on_caret_activity())
 
         self._render()
         self.window.after(25, lambda: (self.window and self.window.winfo_exists() and self.window.focus_force(), self.search_entry and self.search_entry.focus_set()))
         self._poll_outside_click()
+        self._blink_caret()
+
+    def _on_caret_activity(self):
+        self._caret_visible = True
+        self._render()
+
+    def _blink_caret(self):
+        if self._closed or not self.window or not self.window.winfo_exists():
+            return
+        self._caret_visible = not self._caret_visible
+        self._render()
+        self._caret_job = self.parent.after(520, self._blink_caret)
 
     def _on_filter_change(self):
         q = (self.search_var.get() or "").strip().lower()
@@ -394,6 +411,20 @@ class CustomAppLauncher:
             self._render()
 
     def _on_click(self, event):
+        if self._clear_btn_rect:
+            x1, y1, x2, y2 = self._clear_btn_rect
+            if x1 <= event.x <= x2 and y1 <= event.y <= y2:
+                self.search_var.set("")
+                if self.search_entry:
+                    self.search_entry.focus_set()
+                self._on_caret_activity()
+                return
+        y_off = self.CARET_H if self.dock_pos == "top" else 0
+        if 22 <= event.x <= self.CARD_W - 22 and (18 + y_off) <= event.y <= (58 + y_off):
+            if self.search_entry:
+                self.search_entry.focus_set()
+            self._on_caret_activity()
+            return
         for (x1, y1, x2, y2, app) in self.item_boxes:
             if x1 <= event.x <= x2 and y1 <= event.y <= y2:
                 self._launch_app(app)
@@ -490,23 +521,52 @@ class CustomAppLauncher:
         w = self.CARD_W
         total_h = self.CARD_H + self.CARET_H
         y_off = self.CARET_H if self.dock_pos == "top" else 0
-        bg = Image.new("RGBA", (w, total_h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(bg, "RGBA")
-        card_top = y_off + 2
-        card_bot = y_off + self.CARD_H - 3
-        d.rounded_rectangle([2, card_top, w - 3, card_bot], radius=24, fill=(16, 20, 31, 246), outline=(255, 255, 255, 44), width=1)
+
+        # 2x supersampled rendering + true alpha_composite borders so semi-transparent outlines
+        # NEVER punch translucent alpha cutouts through the dark card or search bar pill!
+        ss = 2
+        W, H = w * ss, total_h * ss
+        hi = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(hi, "RGBA")
+        card_top = (y_off + 2) * ss
+        card_bot = (y_off + self.CARD_H - 3) * ss
+        card_fill = (16, 20, 31, 248)
+        d.rounded_rectangle([2 * ss, card_top, W - 3 * ss, card_bot], radius=24 * ss, fill=card_fill)
+
         # Pointer caret pointing toward Launcher icon on Dockbar
-        cx = self.caret_local_x
+        cx = self.caret_local_x * ss
         if self.dock_pos == "bottom":
-            d.polygon([(cx - 10, card_bot - 1), (cx + 10, card_bot - 1), (cx, total_h - 1)], fill=(16, 20, 31, 246))
-            d.line([(cx - 10, card_bot), (cx, total_h - 1), (cx + 10, card_bot)], fill=(255, 255, 255, 44), width=1)
+            d.polygon([(cx - 10 * ss, card_bot - ss), (cx + 10 * ss, card_bot - ss), (cx, H - ss)], fill=card_fill)
         elif self.dock_pos == "top":
-            d.polygon([(cx - 10, card_top + 1), (cx + 10, card_top + 1), (cx, 1)], fill=(16, 20, 31, 246))
-            d.line([(cx - 10, card_top), (cx, 1), (cx + 10, card_top)], fill=(255, 255, 255, 44), width=1)
-        # Search bar pill
-        d.rounded_rectangle([22, 18 + y_off, w - 22, 58 + y_off], radius=16, fill=(28, 34, 49, 255), outline=(96, 165, 250, 95), width=1)
-        alpha_ellipse(bg, [34, 30 + y_off, 48, 44 + y_off], outline=(148, 163, 184, 235), width=2)
-        alpha_line(bg, [(46, 42 + y_off), (51, 47 + y_off)], fill=(148, 163, 184, 235), width=2)
+            d.polygon([(cx - 10 * ss, card_top + ss), (cx + 10 * ss, card_top + ss), (cx, ss)], fill=card_fill)
+
+        # Soft outer card border composited cleanly on separate layer (preserves full card opacity)
+        border_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        bd = ImageDraw.Draw(border_ov, "RGBA")
+        bd.rounded_rectangle([2 * ss, card_top, W - 3 * ss, card_bot], radius=24 * ss, outline=(255, 255, 255, 48), width=ss)
+        hi = Image.alpha_composite(hi, border_ov)
+
+        # Search bar pill: crisp 2x antialiased solid interior + alpha-composited subtle focus border
+        sb_rect = [22 * ss, (18 + y_off) * ss, (w - 22) * ss, (58 + y_off) * ss]
+        sb_rad = 20 * ss
+        sb_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sbd = ImageDraw.Draw(sb_layer, "RGBA")
+        sbd.rounded_rectangle(sb_rect, radius=sb_rad, fill=(28, 34, 49, 255))
+        hi = Image.alpha_composite(hi, sb_layer)
+
+        sb_border = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sb_bd = ImageDraw.Draw(sb_border, "RGBA")
+        sb_bd.rounded_rectangle(sb_rect, radius=sb_rad, outline=(96, 165, 250, 140), width=ss)
+        hi = Image.alpha_composite(hi, sb_border)
+
+        # Crisp 2x magnifying glass glyph
+        ic_ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        icd = ImageDraw.Draw(ic_ov, "RGBA")
+        icd.ellipse([35 * ss, (30 + y_off) * ss, 49 * ss, (44 + y_off) * ss], outline=(148, 163, 184, 240), width=2 * ss)
+        icd.line([(47 * ss, (42 + y_off) * ss), (52 * ss, (47 + y_off) * ss)], fill=(148, 163, 184, 240), width=2 * ss)
+        hi = Image.alpha_composite(hi, ic_ov)
+
+        bg = hi.resize((w, total_h), Image.Resampling.LANCZOS)
         self._bg_cache = bg
         return bg.copy()
 
@@ -520,6 +580,39 @@ class CustomAppLauncher:
         draw = ImageDraw.Draw(composite, "RGBA")
         f_lbl = resolve_styled_font("Segoe UI", 11, bold=False)
         f_sub = resolve_styled_font("Segoe UI", 11, bold=True)
+
+        # Render search query / placeholder, blinking caret, and clear button directly onto layered surface
+        raw_q = self.search_var.get() or ""
+        f_search = resolve_styled_font("Segoe UI", 13, bold=False)
+        sb_mid_y = 38 + y_off
+        txt_x0 = 60
+        txt_max_w = (w - 64) - txt_x0
+        self._clear_btn_rect = None
+        if raw_q:
+            # Keep tail visible if query exceeds search box width
+            disp_q = raw_q
+            while len(disp_q) > 1 and draw.textlength(disp_q, font=f_search) > txt_max_w:
+                disp_q = disp_q[1:]
+            draw.text((txt_x0, sb_mid_y), disp_q, fill=(248, 250, 252, 255), font=f_search, anchor="lm")
+            if self._caret_visible:
+                try:
+                    c_pos = self.search_entry.index(tk.INSERT) if self.search_entry else len(raw_q)
+                except Exception:
+                    c_pos = len(raw_q)
+                prefix_len = max(0, len(disp_q) - max(0, len(raw_q) - c_pos))
+                caret_x = txt_x0 + int(draw.textlength(disp_q[:prefix_len], font=f_search)) + 1
+                caret_x = min(txt_x0 + txt_max_w + 2, caret_x)
+                draw.line([(caret_x, sb_mid_y - 9), (caret_x, sb_mid_y + 9)], fill=(96, 165, 250, 255), width=2)
+            # Clear (×) pill button on right side of search bar
+            cb_cx, cb_cy, cb_r = w - 40, sb_mid_y, 9
+            self._clear_btn_rect = (cb_cx - cb_r - 4, cb_cy - cb_r - 4, cb_cx + cb_r + 4, cb_cy + cb_r + 4)
+            alpha_ellipse(composite, [cb_cx - cb_r, cb_cy - cb_r, cb_cx + cb_r, cb_cy + cb_r], fill=(148, 163, 184, 55))
+            draw.line([(cb_cx - 3, cb_cy - 3), (cb_cx + 3, cb_cy + 3)], fill=(226, 232, 240, 235), width=2)
+            draw.line([(cb_cx + 3, cb_cy - 3), (cb_cx - 3, cb_cy + 3)], fill=(226, 232, 240, 235), width=2)
+        else:
+            draw.text((txt_x0, sb_mid_y), "Buscar aplicaciones...", fill=(148, 163, 184, 170), font=f_search, anchor="lm")
+            if self._caret_visible:
+                draw.line([(txt_x0, sb_mid_y - 9), (txt_x0, sb_mid_y + 9)], fill=(96, 165, 250, 235), width=2)
 
         self.item_boxes = []
         grid_x0 = (w - self.COLS * self.CELL_W) // 2
@@ -583,6 +676,12 @@ class CustomAppLauncher:
 
     def close(self):
         self._closed = True
+        if self._caret_job:
+            try:
+                self.parent.after_cancel(self._caret_job)
+            except Exception:
+                pass
+            self._caret_job = None
         if self._check_job:
             try:
                 self.parent.after_cancel(self._check_job)
