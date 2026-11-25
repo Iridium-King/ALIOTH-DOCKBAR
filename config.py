@@ -43,6 +43,8 @@ DEFAULT_CONFIG = {
         "icon_spacing": 10,                  # Distance between items
         "dock_padding_x": 16,                # Horizontal padding inside dock
         "dock_padding_y": 8,                 # Vertical padding inside dock
+        "dock_bg_scale": 1.0,                # Independent dock background size/height multiplier (0.40 to 1.50)
+        "dock_bg_tilt": 0,                   # Independent 3D perspective tilt of dock background (0 to 40 deg)
         "corner_radius": 20,                 # Pill rounded corners
         "round_all_corners": True,           # Round bottom corners even at 0px edge offset
         "bg_color": "#181a20",               # Dock background color (Hex)
@@ -79,7 +81,7 @@ DEFAULT_CONFIG = {
         "indicator_color": "#60a5fa",
         "indicator_size": 6,                 # Base indicator size (3 to 12 px)
         "dock_battery_style": "ring",        # "ring", "bar", "pill", "minimal"
-        "dock_clock_style": "digital",       # "digital", "analog", "neon", "minimal", "pill"
+        "dock_clock_style": "wide_5_3",      # "wide_5_3", "digital", "analog", "neon", "minimal", "pill"
         "dock_clock_24h": True,
         "dock_clock_seconds": False,
         "dock_clock_show_date": True,
@@ -330,6 +332,13 @@ class ConfigManager:
                 except Exception:
                     pass
 
+    def mark_dirty(self, section, widget_id=None):
+        """Marks a config section or specific widget dirty so save() persists it cleanly."""
+        if section == "widgets" and widget_id:
+            self._dirty_widgets.add(widget_id)
+        elif section:
+            self._dirty_sections.add(section)
+
     def get(self, section, key, default=None):
         return self.data.get(section, {}).get(key, default)
 
@@ -371,7 +380,12 @@ class ConfigManager:
         self.set_items(items)
 
     def remove_item(self, item_id):
-        items = [it for it in self.get_items() if it.get("id") != item_id]
+        items = self.get_items()
+        if isinstance(item_id, int):
+            if 0 <= item_id < len(items):
+                items.pop(item_id)
+        else:
+            items = [it for it in items if it.get("id") != item_id]
         self.set_items(items)
 
     def update_item(self, item_id, new_data):
@@ -389,43 +403,152 @@ class ConfigManager:
             items.insert(to_idx, item)
             self.set_items(items)
 
+    @staticmethod
+    def _default_group_name(items_list, fallback_target_name="Apps"):
+        power_actions = {"shutdown_pc", "restart_pc", "logoff_pc", "lock_pc"}
+        if items_list and all(it.get("type") == "action" for it in items_list):
+            if all(it.get("action_type") in power_actions for it in items_list):
+                return "Energía"
+            return "Acciones de Windows"
+        return f"Grupo ({fallback_target_name})"
+
+    def create_group(self, name="Nueva Carpeta", items_list=None, index=None):
+        """Creates a new group/folder item on the dock and returns its id."""
+        children = []
+        for ch in (items_list or []):
+            ch_copy = copy.deepcopy(ch)
+            if "id" not in ch_copy or not ch_copy["id"]:
+                ch_copy["id"] = str(uuid.uuid4())
+            children.append(ch_copy)
+        new_group = {
+            "id": str(uuid.uuid4()),
+            "type": "group",
+            "name": (name or "Nueva Carpeta").strip() or "Nueva Carpeta",
+            "icon_path": "",
+            "items": children
+        }
+        self.add_item(new_group, index=index)
+        return new_group["id"]
+
+    def add_child_to_group(self, group_id, child_dict):
+        """Appends a new app or system action child into an existing group."""
+        items = self.get_items()
+        for it in items:
+            if it.get("id") == group_id and it.get("type") == "group":
+                child = copy.deepcopy(child_dict)
+                if "id" not in child or not child["id"]:
+                    child["id"] = str(uuid.uuid4())
+                grp_items = it.setdefault("items", it.get("children", []))
+                grp_items.append(child)
+                self.set_items(items)
+                return child["id"]
+        return None
+
+    def move_item_to_group(self, source_ref, target_group_id):
+        """Moves a top-level dock item (by index or id) into an existing group."""
+        items = self.get_items()
+        src_idx = None
+        if isinstance(source_ref, int):
+            if 0 <= source_ref < len(items):
+                src_idx = source_ref
+        else:
+            for i, it in enumerate(items):
+                if it.get("id") == source_ref:
+                    src_idx = i
+                    break
+        tgt_idx = None
+        for i, it in enumerate(items):
+            if it.get("id") == target_group_id and it.get("type") == "group":
+                tgt_idx = i
+                break
+        if src_idx is None or tgt_idx is None or src_idx == tgt_idx:
+            return None
+        return self.merge_into_group(src_idx, tgt_idx)
+
+    def extract_from_group(self, group_id, child_ref):
+        """Moves a single child item (by index or id) out of a group back to the main dock."""
+        items = self.get_items()
+        for g_idx, it in enumerate(items):
+            if it.get("id") == group_id and it.get("type") == "group":
+                children = it.setdefault("items", it.get("children", []))
+                c_idx = None
+                if isinstance(child_ref, int):
+                    if 0 <= child_ref < len(children):
+                        c_idx = child_ref
+                else:
+                    for i, ch in enumerate(children):
+                        if ch.get("id") == child_ref:
+                            c_idx = i
+                            break
+                if c_idx is None:
+                    return None
+                extracted = children.pop(c_idx)
+                if not extracted.get("id"):
+                    extracted["id"] = str(uuid.uuid4())
+                if len(children) == 0:
+                    items[g_idx] = extracted
+                else:
+                    items.insert(g_idx + 1, extracted)
+                self.set_items(items)
+                return extracted["id"]
+        return None
+
     def merge_into_group(self, source_idx, target_idx, group_name="Nuevo Grupo"):
-        """Merges two dock items into a group folder."""
+        """Merges two dock items (apps, system actions, or groups) into a group folder."""
         items = self.get_items()
         if source_idx == target_idx or not (0 <= source_idx < len(items)) or not (0 <= target_idx < len(items)):
             return None
-        
+
+        groupable_types = ("app", "action", "group")
         source_item = items[source_idx]
         target_item = items[target_idx]
 
-        if source_item.get("type") == "separator" or target_item.get("type") == "separator":
+        if source_item.get("type") not in groupable_types or target_item.get("type") not in groupable_types:
             return None
 
         # Remove source item first
         items.pop(source_idx)
         if source_idx < target_idx:
             target_idx -= 1
-        
-        target_item = items[target_idx]
 
-        if target_item.get("type") == "group":
-            if "items" not in target_item:
-                target_item["items"] = []
-            target_item["items"].append(source_item)
+        target_item = items[target_idx]
+        src_type = source_item.get("type")
+        tgt_type = target_item.get("type")
+
+        if tgt_type == "group":
+            grp_items = target_item.setdefault("items", target_item.get("children", []))
+            if src_type == "group":
+                # Flatten source group children into target group instead of nesting groups
+                for ch in source_item.get("items", source_item.get("children", [])):
+                    grp_items.append(ch)
+            else:
+                grp_items.append(source_item)
+            result_id = target_item.get("id")
+        elif src_type == "group":
+            # Moving a group onto an app/action adds that item into the group cleanly
+            grp_items = source_item.setdefault("items", source_item.get("children", []))
+            grp_items.insert(0, target_item)
+            items[target_idx] = source_item
+            result_id = source_item.get("id")
         else:
-            # Create new group from both items
-            name = group_name if group_name != "Nuevo Grupo" else f"Grupo ({target_item.get('name', 'Apps')})"
+            # Create new group from both items (app+app, action+action, app+action, action+app)
+            combined = [target_item, source_item]
+            if group_name and group_name != "Nuevo Grupo":
+                name = group_name
+            else:
+                name = self._default_group_name(combined, target_item.get("name", "Apps"))
             new_group = {
                 "id": str(uuid.uuid4()),
                 "type": "group",
                 "name": name,
                 "icon_path": "",
-                "items": [target_item, source_item]
+                "items": combined
             }
             items[target_idx] = new_group
+            result_id = new_group["id"]
 
         self.set_items(items)
-        return target_item.get("id")
+        return result_id
 
     def ungroup(self, group_id):
         """Unpacks all items from a group back to the main dock."""

@@ -184,7 +184,7 @@ if HAS_PYWIN32_OLE:
                 for i, rect in enumerate(rects):
                     center_x = (rect[0] + rect[2]) / 2.0
                     if abs(cx - center_x) < (rect[2] - rect[0]) * 0.4:
-                        if i < len(items) and items[i].get("type") in ("app", "group", "running_win"):
+                        if i < len(items) and items[i].get("type") in ("app", "group", "action", "running_win"):
                             self.dock.drag_merge_mode = True
                             self.dock.drag_target_idx = i
                             hovered_item_idx = i
@@ -1386,7 +1386,7 @@ class DockWindow:
                     if self.items[i].get("type") == "group":
                         target_group_idx = i
                         break
-                    elif self.items[i].get("type") == "app":
+                    elif self.items[i].get("type") in ("app", "action"):
                         target_app_idx = i
                         break
 
@@ -1513,6 +1513,17 @@ class DockWindow:
         self._rebuild_display_items()
         gc.collect()
 
+    def _item_aspect(self, it):
+        """Returns width/height aspect ratio for a dock item (5:3 horizontal for wide_5_3 clock, 1:1 otherwise)."""
+        if it and it.get("type") == "clock":
+            st = (self.config_mgr.get("appearance", "dock_clock_style", "wide_5_3") or "wide_5_3").lower()
+            if st == "wide_5_3":
+                return 5.0 / 3.0
+        return 1.0
+
+    def _item_width(self, it, height_size):
+        return max(4, int(round(float(height_size) * self._item_aspect(it))))
+
     def update_geometry(self):
         """Calculates dock window position and dimension based on screen bounds."""
         pos = self.config_mgr.get("general", "position", "bottom")
@@ -1521,6 +1532,11 @@ class DockWindow:
         max_icon_h = int(base_size * max_zoom)
         pad_x = self.config_mgr.get("appearance", "dock_padding_x", 16)
         pad_y = self.config_mgr.get("appearance", "dock_padding_y", 8)
+        bg_scale = max(0.4, min(1.5, float(self.config_mgr.get("appearance", "dock_bg_scale", 1.0) or 1.0)))
+        bg_tilt = max(0, min(40, int(self.config_mgr.get("appearance", "dock_bg_tilt", 0) or 0)))
+        eff_pad_x = max(8, int(pad_x * (0.75 + 0.25 * bg_scale)))
+        dock_pill_h_est = max(18, int((base_size + (pad_y * 2)) * bg_scale))
+        tilt_extra = int(dock_pill_h_est * 0.72 * (bg_tilt / 40.0)) * 2 if bg_tilt > 0 else 0
         spacing = self.config_mgr.get("appearance", "icon_spacing", 10)
 
         # Estimate tight max width with wave expansion (smaller buffer = faster 60+ FPS blits)
@@ -1528,9 +1544,11 @@ class DockWindow:
         lbl_font_sz = int(self.config_mgr.get("appearance", "label_font_size", 12))
         label_clearance = max(78, lbl_font_sz + 52) if self.config_mgr.get("appearance", "show_labels", True) else 58
         
-        dock_h = max_icon_h + (pad_y * 2) + label_clearance
-        wave_extra = base_size * max(0.2, max_zoom - 1.0) * min(num_items, 3.6)
-        dock_w = int((base_size * num_items) + wave_extra + (pad_x * 2) + (spacing * max(0, num_items - 1)) + 96)
+        dock_h = max(max_icon_h + (pad_y * 2), dock_pill_h_est + 12) + label_clearance
+        rest_items_w = sum(base_size * self._item_aspect(it) for it in self.items) if self.items else base_size
+        max_aspect = max((self._item_aspect(it) for it in self.items), default=1.0)
+        wave_extra = base_size * max_aspect * max(0.2, max_zoom - 1.0) * min(num_items, 3.6)
+        dock_w = int(rest_items_w + wave_extra + (eff_pad_x * 2) + tilt_extra + (spacing * max(0, num_items - 1)) + 96)
         
         sw = self.root.winfo_screenwidth()
         sh = self.root.winfo_screenheight()
@@ -1865,16 +1883,19 @@ class DockWindow:
         if len(self.target_sizes) != n:
             self.target_sizes = [base_size] * n
 
-        # Use unzoomed rest icon centers to eliminate wave feedback wobble/jitter
+        # Use unzoomed rest icon centers (accounting for wide 5:3 clock) to eliminate wave feedback wobble/jitter
         win_w = getattr(self, "dock_w", 600)
-        rest_total_w = n * base_size + max(0, n - 1) * spacing
-        rest_start_x = (win_w - rest_total_w) / 2.0
+        rest_widths = [base_size * self._item_aspect(self.items[i]) for i in range(n)]
+        rest_total_w = sum(rest_widths) + max(0, n - 1) * spacing
+        rest_x = (win_w - rest_total_w) / 2.0
 
         closest_idx = None
         min_dist = float('inf')
 
         for i in range(n):
-            rest_cx = rest_start_x + i * (base_size + spacing) + base_size * 0.5
+            rw = rest_widths[i]
+            rest_cx = rest_x + rw * 0.5
+            rest_x += rw + spacing
             dist = abs(cursor_x - rest_cx)
             if dist < wave_radius:
                 u = dist / wave_radius
@@ -1890,7 +1911,8 @@ class DockWindow:
                 min_dist = hit_dist
                 closest_idx = i
 
-        self.hovered_index = closest_idx if min_dist < (base_size * max_zoom * 0.65) else None
+        closest_w = rest_widths[closest_idx] if closest_idx is not None else base_size
+        self.hovered_index = closest_idx if min_dist < (closest_w * max_zoom * 0.65) else None
 
     def _start_animation_loop(self):
         """Runs smooth dt-interpolated 60+ FPS animation loop and safely drains OLE drops."""
@@ -2037,45 +2059,55 @@ class DockWindow:
             acc = (34, 197, 94)
 
         cx = cy = hi_s // 2
-        pad = int(hi_s * 0.12)
-        hd.rounded_rectangle([pad - 2, pad - 2, hi_s - pad + 2, hi_s - pad + 2], radius=int(hi_s * 0.24), fill=(15, 23, 42, 215), outline=(255, 255, 255, 55), width=2)
+        # Match exact visual outer bounds of folder/app squircle icons (~3.2% inset)
+        pad = max(4, int(hi_s * 0.032))
+        rad = int(hi_s * 0.24)
+        hd.rounded_rectangle([pad, pad, hi_s - pad - 1, hi_s - pad - 1], radius=rad, fill=(18, 25, 42, 232), outline=(255, 255, 255, 78), width=3)
+        alpha_rounded_rect(hi, [pad + 4, pad + 3, hi_s - pad - 5, hi_s // 2], radius=max(6, rad - 6), fill=(255, 255, 255, 14))
+        hd = ImageDraw.Draw(hi, "RGBA")
+
         st = (style or "ring").lower()
         lbl = f"{pct}%" if bat_info.get("has_battery") else "AC"
         if st == "bar":
-            bx1, bx2 = int(hi_s * 0.18), int(hi_s * 0.78)
-            by1, by2 = int(hi_s * 0.34), int(hi_s * 0.66)
-            hd.rounded_rectangle([bx1, by1, bx2, by2], radius=6, fill=(255, 255, 255, 26), outline=(226, 232, 240, 210), width=3)
-            hd.rounded_rectangle([bx2 + 2, by1 + (by2 - by1) // 4, bx2 + 8, by2 - (by2 - by1) // 4], radius=2, fill=(226, 232, 240, 210))
-            fw = max(4, int((bx2 - bx1 - 10) * (pct / 100.0)))
-            hd.rounded_rectangle([bx1 + 5, by1 + 5, bx1 + 5 + fw, by2 - 5], radius=3, fill=(*acc, 240))
-            f_pct = self._get_font("segoeuib.ttf", max(14, int(hi_s * 0.17)))
+            bx1, bx2 = int(hi_s * 0.14), int(hi_s * 0.80)
+            by1, by2 = int(hi_s * 0.28), int(hi_s * 0.62)
+            hd.rounded_rectangle([bx1, by1, bx2, by2], radius=max(6, int(hi_s * 0.05)), fill=(255, 255, 255, 28), outline=(226, 232, 240, 215), width=max(3, int(hi_s * 0.022)))
+            hd.rounded_rectangle([bx2 + 3, by1 + (by2 - by1) // 4, bx2 + max(8, int(hi_s * 0.05)), by2 - (by2 - by1) // 4], radius=3, fill=(226, 232, 240, 215))
+            fw = max(6, int((bx2 - bx1 - 12) * (pct / 100.0)))
+            hd.rounded_rectangle([bx1 + 6, by1 + 6, bx1 + 6 + fw, by2 - 6], radius=4, fill=(*acc, 245))
+            f_pct = self._get_font("segoeuib.ttf", max(16, int(hi_s * 0.21)))
             hd.text((cx, int(hi_s * 0.79)), lbl, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
         elif st == "pill":
-            hd.rounded_rectangle([int(hi_s * 0.15), int(hi_s * 0.28), int(hi_s * 0.85), int(hi_s * 0.72)], radius=int(hi_s * 0.22), fill=(*acc, 55), outline=(*acc, 230), width=4)
-            f_pct = self._get_font("segoeuib.ttf", max(16, int(hi_s * 0.22)))
+            hd.rounded_rectangle([int(hi_s * 0.11), int(hi_s * 0.24), int(hi_s * 0.89), int(hi_s * 0.76)], radius=int(hi_s * 0.26), fill=(*acc, 60), outline=(*acc, 235), width=max(4, int(hi_s * 0.028)))
+            f_pct = self._get_font("segoeuib.ttf", max(18, int(hi_s * 0.26)))
             hd.text((cx, cy), lbl, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
         elif st == "minimal":
-            f_pct = self._get_font("segoeuib.ttf", max(18, int(hi_s * 0.26)))
-            hd.text((cx, cy - int(hi_s * 0.05)), lbl, fill=(*acc, 255), font=f_pct, anchor="mm")
-            bar_w = int(hi_s * 0.54)
+            f_pct = self._get_font("segoeuib.ttf", max(20, int(hi_s * 0.30)))
+            hd.text((cx, cy - int(hi_s * 0.06)), lbl, fill=(*acc, 255), font=f_pct, anchor="mm")
+            bar_w = int(hi_s * 0.66)
             bx1 = cx - bar_w // 2
-            hd.rounded_rectangle([bx1, int(hi_s * 0.70), bx1 + bar_w, int(hi_s * 0.77)], radius=3, fill=(255, 255, 255, 45))
-            hd.rounded_rectangle([bx1, int(hi_s * 0.70), bx1 + max(4, int(bar_w * (pct / 100.0))), int(hi_s * 0.77)], radius=3, fill=(*acc, 245))
+            hd.rounded_rectangle([bx1, int(hi_s * 0.72), bx1 + bar_w, int(hi_s * 0.80)], radius=4, fill=(255, 255, 255, 48))
+            hd.rounded_rectangle([bx1, int(hi_s * 0.72), bx1 + max(6, int(bar_w * (pct / 100.0))), int(hi_s * 0.80)], radius=4, fill=(*acc, 248))
         else:
-            # "ring" gauge (default)
-            r_in = int(hi_s * 0.28)
-            th = max(5, int(hi_s * 0.07))
-            hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=0, end=360, fill=(255, 255, 255, 38), width=th)
+            # "ring" gauge (default) — full-scale crisp ring matching folder icon visual weight
+            r_in = int(hi_s * 0.35)
+            th = max(6, int(hi_s * 0.085))
+            hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=0, end=360, fill=(255, 255, 255, 42), width=th)
             span = int(360 * (pct / 100.0))
             if span > 0:
-                hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=-90, end=-90 + span, fill=(*acc, 250), width=th)
-            f_pct = self._get_font("segoeuib.ttf", max(14, int(hi_s * 0.19)))
-            hd.text((cx, cy), f"{pct}", fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
+                hd.arc([cx - r_in, cy - r_in, cx + r_in, cy + r_in], start=-90, end=-90 + span, fill=(*acc, 252), width=th)
+            f_pct = self._get_font("segoeuib.ttf", max(16, int(hi_s * (0.22 if pct >= 100 else 0.25))))
+            hd.text((cx, cy), lbl, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
 
         if charging:
-            bx = int(hi_s * 0.80)
-            by = int(hi_s * 0.22)
-            hd.polygon([(bx + 2, by - 7), (bx - 5, by + 1), (bx + 1, by + 1), (bx - 2, by + 8), (bx + 6, by - 1), (bx, by - 1)], fill=(250, 204, 21, 255))
+            bx = int(hi_s * 0.83)
+            by = int(hi_s * 0.19)
+            sc = hi_s / 148.0
+            hd.polygon([
+                (bx + 2 * sc, by - 8 * sc), (bx - 6 * sc, by + 1 * sc),
+                (bx + 1 * sc, by + 1 * sc), (bx - 2 * sc, by + 9 * sc),
+                (bx + 7 * sc, by - 1 * sc), (bx, by - 1 * sc),
+            ], fill=(250, 204, 21, 255))
 
         img = hi.resize((s, s), Image.Resampling.LANCZOS)
         self._bat_icon_cache = (key, img)
@@ -2083,7 +2115,7 @@ class DockWindow:
 
     def _get_clock_icon_img(self, size):
         now_lt = time.localtime()
-        style = (self.config_mgr.get("appearance", "dock_clock_style", "digital") or "digital").lower()
+        style = (self.config_mgr.get("appearance", "dock_clock_style", "wide_5_3") or "wide_5_3").lower()
         use_24h = bool(self.config_mgr.get("appearance", "dock_clock_24h", True))
         show_sec = bool(self.config_mgr.get("appearance", "dock_clock_seconds", False))
         show_date = bool(self.config_mgr.get("appearance", "dock_clock_show_date", True))
@@ -2091,31 +2123,80 @@ class DockWindow:
         acc_rgb = hex_to_rgb(col_hex)
 
         hr = now_lt.tm_hour
+        ampm = ""
         if not use_24h:
+            ampm = " PM" if hr >= 12 else " AM"
             hr = hr % 12 or 12
         t_str = f"{hr:02d}:{now_lt.tm_min:02d}"
         s_str = f":{now_lt.tm_sec:02d}" if show_sec else ""
         dias = ("Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom")
+        meses = ("Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic")
         d_str = f"{dias[now_lt.tm_wday]} {now_lt.tm_mday}" if show_date else ""
-        key = (int(size), style, t_str, s_str if (show_sec or style == "analog") else "", d_str, col_hex)
+        d_wide_str = f"{dias[now_lt.tm_wday]} {now_lt.tm_mday} {meses[now_lt.tm_mon - 1]}" if show_date else ""
+        key = (int(size), style, t_str, s_str if (show_sec or style == "analog") else "", ampm, d_str, d_wide_str, col_hex)
         if self._clock_icon_cache and self._clock_icon_cache[0] == key:
             return self._clock_icon_cache[1]
 
         s = max(24, int(size))
+        if style == "wide_5_3":
+            out_w = max(36, int(round(s * 5.0 / 3.0)))
+            out_h = s
+            hi_w, hi_h = out_w * 2, out_h * 2
+            hi = Image.new("RGBA", (hi_w, hi_h), (0, 0, 0, 0))
+            hd = ImageDraw.Draw(hi, "RGBA")
+            pad = max(4, int(hi_h * 0.032))
+            rad = int(hi_h * 0.24)
+            hd.rounded_rectangle([pad, pad, hi_w - pad - 1, hi_h - pad - 1], radius=rad, fill=(18, 25, 42, 232), outline=(255, 255, 255, 78), width=3)
+            alpha_rounded_rect(hi, [pad + 4, pad + 3, hi_w - pad - 5, hi_h // 2], radius=max(6, rad - 6), fill=(255, 255, 255, 14))
+            hd = ImageDraw.Draw(hi, "RGBA")
+
+            cx = hi_w / 2.0
+            cy = hi_h / 2.0
+            inner_w = hi_w - (pad * 2) - int(hi_h * 0.14)
+            time_disp = (t_str + s_str) if use_24h else (t_str + s_str + ampm)
+
+            # Auto-fit large crisp time inside the 5:3 horizontal card
+            target_t_px = int(hi_h * (0.44 if not d_wide_str else (0.41 if not show_sec else 0.33)))
+            if not use_24h:
+                target_t_px = int(target_t_px * 0.86)
+            f_t = self._get_font("segoeuib.ttf", max(18, target_t_px))
+            cur_px = max(18, target_t_px)
+            while cur_px > 14 and hd.textlength(time_disp, font=f_t) > inner_w:
+                cur_px -= 2
+                f_t = self._get_font("segoeuib.ttf", cur_px)
+
+            time_y = cy - (int(hi_h * 0.14) if d_wide_str else 0)
+            hd.text((cx, time_y), time_disp, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+
+            if d_wide_str:
+                target_d_px = max(14, int(hi_h * 0.22))
+                f_d = self._get_font("seguisb.ttf", target_d_px)
+                d_px = target_d_px
+                while d_px > 12 and hd.textlength(d_wide_str, font=f_d) > inner_w:
+                    d_px -= 1
+                    f_d = self._get_font("seguisb.ttf", d_px)
+                hd.text((cx, cy + int(hi_h * 0.23)), d_wide_str, fill=(203, 213, 225, 245), font=f_d, anchor="mm")
+
+            img = hi.resize((out_w, out_h), Image.Resampling.LANCZOS)
+            self._clock_icon_cache = (key, img)
+            return img
+
         hi_s = s * 2
         hi = Image.new("RGBA", (hi_s, hi_s), (0, 0, 0, 0))
         hd = ImageDraw.Draw(hi, "RGBA")
         cx = cy = hi_s // 2
-        pad = int(hi_s * 0.08)
+        # Match full visual size of folder/app squircle icons (~3.2% inset)
+        pad = max(4, int(hi_s * 0.032))
+        rad = int(hi_s * 0.24)
 
         if style == "analog":
             r = hi_s // 2 - pad
-            hd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(15, 23, 42, 230), outline=(*acc_rgb, 195), width=4)
+            hd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(15, 23, 42, 235), outline=(*acc_rgb, 200), width=4)
             for k_h in range(12):
                 ang = math.radians(k_h * 30 - 90)
-                r1 = r - (12 if k_h % 3 == 0 else 7)
-                r2 = r - 3
-                hd.line([(cx + math.cos(ang) * r1, cy + math.sin(ang) * r1), (cx + math.cos(ang) * r2, cy + math.sin(ang) * r2)], fill=(226, 232, 240, 210 if k_h % 3 == 0 else 120), width=3 if k_h % 3 == 0 else 2)
+                r1 = r - (14 if k_h % 3 == 0 else 8)
+                r2 = r - 4
+                hd.line([(cx + math.cos(ang) * r1, cy + math.sin(ang) * r1), (cx + math.cos(ang) * r2, cy + math.sin(ang) * r2)], fill=(226, 232, 240, 215 if k_h % 3 == 0 else 125), width=3 if k_h % 3 == 0 else 2)
             # Hour, minute, optional second hand
             h_ang = math.radians(((now_lt.tm_hour % 12) + now_lt.tm_min / 60.0) * 30.0 - 90.0)
             m_ang = math.radians((now_lt.tm_min + now_lt.tm_sec / 60.0) * 6.0 - 90.0)
@@ -2126,33 +2207,35 @@ class DockWindow:
                 hd.line([(cx, cy), (cx + math.cos(sec_ang) * (r * 0.78), cy + math.sin(sec_ang) * (r * 0.78))], fill=(56, 189, 248, 255), width=2)
             hd.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(56, 189, 248, 255))
         elif style == "neon":
-            hd.rounded_rectangle([pad, pad, hi_s - pad, hi_s - pad], radius=int(hi_s * 0.24), fill=(9, 13, 24, 240), outline=(56, 189, 248, 225), width=4)
-            f_t = self._get_font("segoeuib.ttf", max(14, int(hi_s * (0.23 if not show_sec else 0.19))))
-            hd.text((cx, cy - (int(hi_s * 0.10) if d_str else 0)), t_str + s_str, fill=(56, 189, 248, 255), font=f_t, anchor="mm")
+            hd.rounded_rectangle([pad, pad, hi_s - pad - 1, hi_s - pad - 1], radius=rad, fill=(9, 13, 24, 242), outline=(56, 189, 248, 230), width=4)
+            f_t = self._get_font("segoeuib.ttf", max(16, int(hi_s * (0.28 if not show_sec else 0.21))))
+            hd.text((cx, cy - (int(hi_s * 0.12) if d_str else 0)), t_str + s_str, fill=(56, 189, 248, 255), font=f_t, anchor="mm")
             if d_str:
-                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.14)))
-                hd.text((cx, cy + int(hi_s * 0.19)), d_str, fill=(*acc_rgb, 225), font=f_d, anchor="mm")
+                f_d = self._get_font("seguisb.ttf", max(13, int(hi_s * 0.17)))
+                hd.text((cx, cy + int(hi_s * 0.22)), d_str, fill=(*acc_rgb, 230), font=f_d, anchor="mm")
         elif style == "minimal":
-            f_t = self._get_font("segoeuib.ttf", max(15, int(hi_s * (0.27 if not show_sec else 0.21))))
+            f_t = self._get_font("segoeuib.ttf", max(17, int(hi_s * (0.31 if not show_sec else 0.23))))
+            hd.text((cx, cy - (int(hi_s * 0.12) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+            if d_str:
+                f_d = self._get_font("seguisb.ttf", max(13, int(hi_s * 0.18)))
+                hd.text((cx, cy + int(hi_s * 0.22)), d_str, fill=(203, 213, 225, 235), font=f_d, anchor="mm")
+        elif style == "pill":
+            hd.rounded_rectangle([pad, int(hi_s * 0.12), hi_s - pad - 1, int(hi_s * 0.88)], radius=int(hi_s * 0.34), fill=(0, 120, 212, 82), outline=(56, 189, 248, 220), width=3)
+            f_t = self._get_font("segoeuib.ttf", max(16, int(hi_s * (0.27 if not show_sec else 0.20))))
             hd.text((cx, cy - (int(hi_s * 0.11) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
             if d_str:
-                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.15)))
-                hd.text((cx, cy + int(hi_s * 0.20)), d_str, fill=(203, 213, 225, 225), font=f_d, anchor="mm")
-        elif style == "pill":
-            hd.rounded_rectangle([pad, int(hi_s * 0.16), hi_s - pad, int(hi_s * 0.84)], radius=int(hi_s * 0.32), fill=(0, 120, 212, 72), outline=(56, 189, 248, 210), width=3)
-            f_t = self._get_font("segoeuib.ttf", max(14, int(hi_s * (0.22 if not show_sec else 0.18))))
-            hd.text((cx, cy - (int(hi_s * 0.09) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
-            if d_str:
-                f_d = self._get_font("segoeui.ttf", max(10, int(hi_s * 0.13)))
-                hd.text((cx, cy + int(hi_s * 0.16)), d_str, fill=(224, 242, 254, 235), font=f_d, anchor="mm")
+                f_d = self._get_font("seguisb.ttf", max(12, int(hi_s * 0.16)))
+                hd.text((cx, cy + int(hi_s * 0.19)), d_str, fill=(224, 242, 254, 240), font=f_d, anchor="mm")
         else:
-            # "digital" crisp frosted glass tile
-            hd.rounded_rectangle([pad, pad, hi_s - pad, hi_s - pad], radius=int(hi_s * 0.24), fill=(15, 23, 42, 225), outline=(255, 255, 255, 65), width=2)
-            f_t = self._get_font("segoeuib.ttf", max(15, int(hi_s * (0.24 if not show_sec else 0.19))))
-            hd.text((cx, cy - (int(hi_s * 0.10) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
+            # "digital" crisp frosted glass tile (1:1 square)
+            hd.rounded_rectangle([pad, pad, hi_s - pad - 1, hi_s - pad - 1], radius=rad, fill=(18, 25, 42, 232), outline=(255, 255, 255, 78), width=3)
+            alpha_rounded_rect(hi, [pad + 4, pad + 3, hi_s - pad - 5, hi_s // 2], radius=max(6, rad - 6), fill=(255, 255, 255, 14))
+            hd = ImageDraw.Draw(hi, "RGBA")
+            f_t = self._get_font("segoeuib.ttf", max(17, int(hi_s * (0.29 if not show_sec else 0.21))))
+            hd.text((cx, cy - (int(hi_s * 0.12) if d_str else 0)), t_str + s_str, fill=(*acc_rgb, 255), font=f_t, anchor="mm")
             if d_str:
-                f_d = self._get_font("segoeui.ttf", max(11, int(hi_s * 0.14)))
-                hd.text((cx, cy + int(hi_s * 0.19)), d_str, fill=(148, 163, 184, 240), font=f_d, anchor="mm")
+                f_d = self._get_font("seguisb.ttf", max(13, int(hi_s * 0.17)))
+                hd.text((cx, cy + int(hi_s * 0.22)), d_str, fill=(186, 198, 216, 245), font=f_d, anchor="mm")
 
         img = hi.resize((s, s), Image.Resampling.LANCZOS)
         self._clock_icon_cache = (key, img)
@@ -2211,6 +2294,49 @@ class DockWindow:
         sp = max(1, int(ri * 0.32))
         alpha_ellipse(composite, [cx - int(ri * 0.35) - sp, cy - int(ri * 0.35) - sp, cx - int(ri * 0.35) + sp, cy - int(ri * 0.35) + sp], fill=(250, 254, 255, min(255, int(alpha * 0.95))))
 
+    @staticmethod
+    def _rounded_polygon_pts(corners, radius, steps_per_corner=10):
+        """Builds a smooth closed polyline with quadratic-Bezier rounded corners."""
+        n = len(corners)
+        pts = []
+        for i in range(n):
+            p_prev = corners[(i - 1) % n]
+            p_cur = corners[i]
+            p_next = corners[(i + 1) % n]
+            v1x, v1y = p_prev[0] - p_cur[0], p_prev[1] - p_cur[1]
+            v2x, v2y = p_next[0] - p_cur[0], p_next[1] - p_cur[1]
+            l1 = math.hypot(v1x, v1y) or 1.0
+            l2 = math.hypot(v2x, v2y) or 1.0
+            d = min(float(radius), l1 * 0.42, l2 * 0.42)
+            ax, ay = p_cur[0] + (v1x / l1) * d, p_cur[1] + (v1y / l1) * d
+            bx, by = p_cur[0] + (v2x / l2) * d, p_cur[1] + (v2y / l2) * d
+            for st in range(steps_per_corner + 1):
+                t = st / float(steps_per_corner)
+                mt = 1.0 - t
+                px = mt * mt * ax + 2.0 * mt * t * p_cur[0] + t * t * bx
+                py = mt * mt * ay + 2.0 * mt * t * p_cur[1] + t * t * by
+                pts.append((px, py))
+        return pts
+
+    @staticmethod
+    def _resample_closed_polyline(pts, step=4.0):
+        """Resamples a closed polygon perimeter at uniform arc-length intervals."""
+        out = []
+        n = len(pts)
+        if n < 2:
+            return pts
+        for i in range(n):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % n]
+            seg = math.hypot(x2 - x1, y2 - y1)
+            if seg < 0.5:
+                continue
+            k = max(1, int(seg / max(1.0, step)))
+            for j in range(k):
+                t = j / float(k)
+                out.append((x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))
+        return out
+
     def _render_composite_dock(self):
         win_w = getattr(self, "dock_w", self.canvas.winfo_width())
         win_h = getattr(self, "dock_h", self.canvas.winfo_height())
@@ -2221,6 +2347,9 @@ class DockWindow:
         spacing = self.config_mgr.get("appearance", "icon_spacing", 10)
         pad_x = self.config_mgr.get("appearance", "dock_padding_x", 16)
         pad_y = self.config_mgr.get("appearance", "dock_padding_y", 8)
+        bg_scale = max(0.4, min(1.5, float(self.config_mgr.get("appearance", "dock_bg_scale", 1.0) or 1.0)))
+        bg_tilt = max(0, min(40, int(self.config_mgr.get("appearance", "dock_bg_tilt", 0) or 0)))
+        eff_pad_x = max(8, int(pad_x * (0.75 + 0.25 * bg_scale)))
         corner_radius = self.config_mgr.get("appearance", "corner_radius", 20)
         bg_hex = self.config_mgr.get("appearance", "bg_color", "#181a20")
         bg_opacity = float(self.config_mgr.get("appearance", "bg_opacity", 0.82))
@@ -2242,12 +2371,10 @@ class DockWindow:
             # Empty dock notice
             return
 
-        total_content_w = sum(self.current_sizes) + (spacing * (num_items - 1))
-        dock_pill_w = int(total_content_w + (pad_x * 2))
-        
-        # Pill height remains STRICTLY CONSTANT based on base icon size!
-        # The background pill never grows or bounces on hover.
-        dock_pill_h = int(base_size + (pad_y * 2))
+        total_content_w = sum(self._item_width(self.items[i], self.current_sizes[i]) for i in range(num_items)) + (spacing * (num_items - 1))
+        dock_pill_h = max(18, int((base_size + (pad_y * 2)) * bg_scale))
+        tilt_inset = int(min(dock_pill_h * 0.72, total_content_w * 0.16) * (bg_tilt / 40.0)) if bg_tilt > 0 else 0
+        dock_pill_w = int(total_content_w + (eff_pad_x * 2) + (tilt_inset * 2))
 
         # Center pill horizontally
         pill_x1 = (win_w - dock_pill_w) // 2
@@ -2276,7 +2403,7 @@ class DockWindow:
                 width=2
             )
 
-        # Draw 2x Supersampled Antialiased macOS Glass Rounded Pill (cached)
+        # Draw 2x Supersampled Antialiased macOS Glass Rounded Pill or 3D Perspective Shelf (cached)
         bg_rgb = hex_to_rgb(bg_hex)
         bg_rgba = (*bg_rgb, max(4, int(255 * bg_opacity)))
         border_rgb = hex_to_rgb(border_hex)
@@ -2293,7 +2420,7 @@ class DockWindow:
             elif pos == "top":
                 flat_mode = "flat_top"
 
-        pill_key = (pill_w_int, pill_h_int, corner_radius, bg_rgba, border_enabled, border_rgba, border_w, border_style, flat_mode)
+        pill_key = (pill_w_int, pill_h_int, corner_radius, bg_rgba, border_enabled, border_rgba, border_w, border_style, flat_mode, tilt_inset, pos)
         pill_img = self._pill_cache.get(pill_key)
         if pill_img is None:
             while len(self._pill_cache) >= 8:
@@ -2303,44 +2430,111 @@ class DockWindow:
             hi_r = min(corner_radius * ss, hi_h // 2, hi_w // 2)
             hi = Image.new("RGBA", (hi_w, hi_h), (0, 0, 0, 0))
             hd = ImageDraw.Draw(hi)
-            if flat_mode == "flat_bottom":
-                rect_pts = [0, 0, hi_w - 1, hi_h + hi_r]
-            elif flat_mode == "flat_top":
-                rect_pts = [0, -hi_r, hi_w - 1, hi_h - 1]
-            else:
-                rect_pts = [0, 0, hi_w - 1, hi_h - 1]
-            hd.rounded_rectangle(rect_pts, radius=hi_r, fill=bg_rgba)
-            if border_enabled and border_rgba[3] > 2:
-                bw_hi = border_w * ss
-                pad_b = max(1, bw_hi // 2)
-                b_pts = [rect_pts[0] + pad_b, rect_pts[1] + pad_b, rect_pts[2] - pad_b, rect_pts[3] - pad_b]
-                if border_style == "neon":
-                    glow_a = max(15, int(border_rgba[3] * 0.35))
-                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=(border_rgb[0], border_rgb[1], border_rgb[2], glow_a), width=bw_hi * 3)
-                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
-                elif border_style == "double":
-                    w1 = max(2, bw_hi // 2)
-                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=w1)
-                    ins = bw_hi + ss * 3
-                    in_pts = [b_pts[0] + ins, b_pts[1] + ins, b_pts[2] - ins, b_pts[3] - ins]
-                    if in_pts[2] > in_pts[0] + 20 and in_pts[3] > in_pts[1] + 20:
-                        hd.rounded_rectangle(in_pts, radius=max(4, hi_r - pad_b - ins), outline=border_rgba, width=w1)
-                elif border_style in ("dashed", "dotted"):
-                    pts = self._rounded_rect_perimeter_pts(b_pts[0], b_pts[1], b_pts[2], b_pts[3], max(4, hi_r - pad_b), step=4.0)
-                    if border_style == "dashed":
-                        dash_on, dash_off = 5, 4
-                        cyc = dash_on + dash_off
-                        for idx_p in range(len(pts)):
-                            if (idx_p % cyc) < dash_on and idx_p + 1 < len(pts):
-                                hd.line([pts[idx_p], pts[idx_p + 1]], fill=border_rgba, width=bw_hi)
-                    else:
-                        step_d = max(3, int(bw_hi * 1.45))
-                        rad_d = max(2, bw_hi // 2)
-                        for idx_p in range(0, len(pts), step_d):
-                            px_d, py_d = pts[idx_p]
-                            hd.ellipse([px_d - rad_d, py_d - rad_d, px_d + rad_d, py_d + rad_d], fill=border_rgba)
+            if tilt_inset > 0:
+                hi_ins = min(tilt_inset * ss, hi_w // 4)
+                if pos == "top":
+                    outer_corners = [
+                        (0, 0), (hi_w - 1, 0),
+                        (hi_w - 1 - hi_ins, hi_h - 1), (hi_ins, hi_h - 1)
+                    ]
                 else:
-                    hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
+                    outer_corners = [
+                        (hi_ins, 0), (hi_w - 1 - hi_ins, 0),
+                        (hi_w - 1, hi_h - 1), (0, hi_h - 1)
+                    ]
+                poly_pts = self._rounded_polygon_pts(outer_corners, hi_r, steps_per_corner=10)
+                hd.polygon(poly_pts, fill=bg_rgba)
+                # Subtle 3D glass depth rim along the wider front edge
+                lip_a = max(14, min(90, int(bg_rgba[3] * 0.24)))
+                if pos == "top":
+                    hd.line([(hi_r // 2, ss * 2), (hi_w - hi_r // 2, ss * 2)], fill=(255, 255, 255, lip_a), width=ss * 2)
+                else:
+                    hd.line([(hi_r // 2, hi_h - ss * 2), (hi_w - hi_r // 2, hi_h - ss * 2)], fill=(255, 255, 255, lip_a), width=ss * 2)
+                if border_enabled and border_rgba[3] > 2:
+                    bw_hi = border_w * ss
+                    pad_b = max(1, bw_hi // 2)
+                    if pos == "top":
+                        b_corners = [
+                            (pad_b, pad_b), (hi_w - 1 - pad_b, pad_b),
+                            (hi_w - 1 - hi_ins - pad_b, hi_h - 1 - pad_b), (hi_ins + pad_b, hi_h - 1 - pad_b)
+                        ]
+                    else:
+                        b_corners = [
+                            (hi_ins + pad_b, pad_b), (hi_w - 1 - hi_ins - pad_b, pad_b),
+                            (hi_w - 1 - pad_b, hi_h - 1 - pad_b), (pad_b, hi_h - 1 - pad_b)
+                        ]
+                    b_poly = self._rounded_polygon_pts(b_corners, max(4, hi_r - pad_b), steps_per_corner=10)
+                    closed_b = b_poly + [b_poly[0]]
+                    if border_style == "neon":
+                        glow_a = max(15, int(border_rgba[3] * 0.35))
+                        hd.line(closed_b, fill=(border_rgb[0], border_rgb[1], border_rgb[2], glow_a), width=bw_hi * 3, joint="curve")
+                        hd.line(closed_b, fill=border_rgba, width=bw_hi, joint="curve")
+                    elif border_style == "double":
+                        w1 = max(2, bw_hi // 2)
+                        hd.line(closed_b, fill=border_rgba, width=w1, joint="curve")
+                        ins = bw_hi + ss * 3
+                        if hi_w - 2 * (hi_ins + ins) > 24 and hi_h - 2 * ins > 16:
+                            if pos == "top":
+                                in_c = [(ins, ins), (hi_w - 1 - ins, ins), (hi_w - 1 - hi_ins - ins, hi_h - 1 - ins), (hi_ins + ins, hi_h - 1 - ins)]
+                            else:
+                                in_c = [(hi_ins + ins, ins), (hi_w - 1 - hi_ins - ins, ins), (hi_w - 1 - ins, hi_h - 1 - ins), (ins, hi_h - 1 - ins)]
+                            in_poly = self._rounded_polygon_pts(in_c, max(4, hi_r - pad_b - ins), steps_per_corner=8)
+                            hd.line(in_poly + [in_poly[0]], fill=border_rgba, width=w1, joint="curve")
+                    elif border_style in ("dashed", "dotted"):
+                        u_pts = self._resample_closed_polyline(b_poly, step=4.0)
+                        if border_style == "dashed":
+                            dash_on, dash_off = 5, 4
+                            cyc = dash_on + dash_off
+                            for idx_p in range(len(u_pts)):
+                                if (idx_p % cyc) < dash_on:
+                                    hd.line([u_pts[idx_p], u_pts[(idx_p + 1) % len(u_pts)]], fill=border_rgba, width=bw_hi)
+                        else:
+                            step_d = max(3, int(bw_hi * 1.45))
+                            rad_d = max(2, bw_hi // 2)
+                            for idx_p in range(0, len(u_pts), step_d):
+                                px_d, py_d = u_pts[idx_p]
+                                hd.ellipse([px_d - rad_d, py_d - rad_d, px_d + rad_d, py_d + rad_d], fill=border_rgba)
+                    else:
+                        hd.line(closed_b, fill=border_rgba, width=bw_hi, joint="curve")
+            else:
+                if flat_mode == "flat_bottom":
+                    rect_pts = [0, 0, hi_w - 1, hi_h + hi_r]
+                elif flat_mode == "flat_top":
+                    rect_pts = [0, -hi_r, hi_w - 1, hi_h - 1]
+                else:
+                    rect_pts = [0, 0, hi_w - 1, hi_h - 1]
+                hd.rounded_rectangle(rect_pts, radius=hi_r, fill=bg_rgba)
+                if border_enabled and border_rgba[3] > 2:
+                    bw_hi = border_w * ss
+                    pad_b = max(1, bw_hi // 2)
+                    b_pts = [rect_pts[0] + pad_b, rect_pts[1] + pad_b, rect_pts[2] - pad_b, rect_pts[3] - pad_b]
+                    if border_style == "neon":
+                        glow_a = max(15, int(border_rgba[3] * 0.35))
+                        hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=(border_rgb[0], border_rgb[1], border_rgb[2], glow_a), width=bw_hi * 3)
+                        hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
+                    elif border_style == "double":
+                        w1 = max(2, bw_hi // 2)
+                        hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=w1)
+                        ins = bw_hi + ss * 3
+                        in_pts = [b_pts[0] + ins, b_pts[1] + ins, b_pts[2] - ins, b_pts[3] - ins]
+                        if in_pts[2] > in_pts[0] + 20 and in_pts[3] > in_pts[1] + 20:
+                            hd.rounded_rectangle(in_pts, radius=max(4, hi_r - pad_b - ins), outline=border_rgba, width=w1)
+                    elif border_style in ("dashed", "dotted"):
+                        pts = self._rounded_rect_perimeter_pts(b_pts[0], b_pts[1], b_pts[2], b_pts[3], max(4, hi_r - pad_b), step=4.0)
+                        if border_style == "dashed":
+                            dash_on, dash_off = 5, 4
+                            cyc = dash_on + dash_off
+                            for idx_p in range(len(pts)):
+                                if (idx_p % cyc) < dash_on and idx_p + 1 < len(pts):
+                                    hd.line([pts[idx_p], pts[idx_p + 1]], fill=border_rgba, width=bw_hi)
+                        else:
+                            step_d = max(3, int(bw_hi * 1.45))
+                            rad_d = max(2, bw_hi // 2)
+                            for idx_p in range(0, len(pts), step_d):
+                                px_d, py_d = pts[idx_p]
+                                hd.ellipse([px_d - rad_d, py_d - rad_d, px_d + rad_d, py_d + rad_d], fill=border_rgba)
+                    else:
+                        hd.rounded_rectangle(b_pts, radius=max(4, hi_r - pad_b), outline=border_rgba, width=bw_hi)
             pill_img = hi.resize((pill_w_int, pill_h_int), Image.Resampling.LANCZOS)
             self._pill_cache[pill_key] = pill_img
         else:
@@ -2350,7 +2544,7 @@ class DockWindow:
 
         # Draw Items (Icons and Separators)
         self.item_rects = []
-        cur_x = pill_x1 + pad_x
+        cur_x = pill_x1 + eff_pad_x + tilt_inset
         eff_speed = max(0.35, min(3.0, float(self.config_mgr.get("appearance", "launch_effect_speed", 1.0) or 1.0)))
         eff_dur = 1.38 / eff_speed
         eff_rgb = hex_to_rgb(self.config_mgr.get("appearance", "launch_effect_color", "#0078d4"))
@@ -2358,17 +2552,20 @@ class DockWindow:
         er_hi, eg_hi, eb_hi = min(255, er + 55), min(255, eg + 115), min(255, eb + 45)
         now_eff = time.time()
 
+        # Rest baseline adapts cleanly to independent dock_bg_scale without changing icon sizes
+        rest_pad_v = max(4, (dock_pill_h - int(base_size)) // 2)
         for i, it in enumerate(self.items):
             size = int(self.current_sizes[i]) if i < len(self.current_sizes) else int(base_size)
+            item_w = self._item_width(it, size)
             it_type = it.get("type", "app")
             it_id = it.get("id")
 
             # On bottom dock, align items to bottom baseline so only the icon expands UPWARDS
             if pos == "bottom":
-                baseline_bottom = pill_y2 - pad_y
+                baseline_bottom = pill_y2 - rest_pad_v
                 item_y = baseline_bottom - size
             elif pos == "top":
-                baseline_top = pill_y1 + pad_y
+                baseline_top = pill_y1 + rest_pad_v
                 item_y = baseline_top
             else:
                 item_y = pill_y1 + (dock_pill_h - size) // 2
@@ -2453,7 +2650,7 @@ class DockWindow:
                     alpha_line(composite, [(sx, sy1), (sx, sy2)], fill=sep_rgba, width=sep_w)
                 self.item_rects.append((cur_x, pill_y1, cur_x + size, pill_y2))
             else:
-                icx = int(cur_x + size * 0.5)
+                icx = int(cur_x + item_w * 0.5)
                 icy = int(item_y + size * 0.5)
                 floor_y = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
 
@@ -2543,11 +2740,12 @@ class DockWindow:
                     composite.alpha_composite(icon_img, (dx_ic, dy_ic))
                 elif it_type == "clock":
                     icon_img = self._get_clock_icon_img(size)
-                    draw_sz = max(12, int(round(size * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else size
-                    dx_ic = int(icx - draw_sz * 0.5) if draw_sz != size else int(cur_x)
-                    dy_ic = max(1, int(icy - draw_sz * 0.5)) if draw_sz != size else int(item_y)
-                    if draw_sz != icon_img.width:
-                        icon_img = icon_img.resize((draw_sz, draw_sz), Image.Resampling.LANCZOS)
+                    draw_w = max(12, int(round(icon_img.width * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else icon_img.width
+                    draw_h = max(12, int(round(icon_img.height * eff_scale))) if abs(eff_scale - 1.0) > 0.01 else icon_img.height
+                    dx_ic = int(icx - draw_w * 0.5)
+                    dy_ic = max(1, int(icy - draw_h * 0.5)) if draw_h != size else int(item_y)
+                    if draw_w != icon_img.width or draw_h != icon_img.height:
+                        icon_img = icon_img.resize((draw_w, draw_h), Image.Resampling.LANCZOS)
                     composite.alpha_composite(icon_img, (dx_ic, dy_ic))
                 else:
                     icon_img = self.icon_cache.get(it_id)
@@ -2633,7 +2831,7 @@ class DockWindow:
                         ind_st = (self.config_mgr.get("appearance", "indicator_style", "dot") or "dot").lower()
                         ind_rgb = hex_to_rgb(self.config_mgr.get("appearance", "indicator_color", "#60a5fa") or "#60a5fa")
                         ind_sz = max(3, min(12, int(self.config_mgr.get("appearance", "indicator_size", 4) or 4)))
-                        dot_cx = int(cur_x + size // 2)
+                        dot_cx = int(cur_x + item_w // 2)
                         dot_cy = int(pill_y2 - 5 if pos == "bottom" else pill_y1 + 5)
                         if ind_st == "pill":
                             hw = max(6, int(ind_sz * 1.8))
@@ -2666,9 +2864,9 @@ class DockWindow:
                     f_bdg = self._get_font("segoeui.ttf", 9)
                     draw.text((bx2 - bw + 4, by1 + 1), b_str[:3], fill=(255, 255, 255, 255), font=f_bdg)
 
-                self.item_rects.append((cur_x, item_y, cur_x + size, item_y + size))
+                self.item_rects.append((cur_x, item_y, cur_x + item_w, item_y + size))
 
-            cur_x += size + spacing
+            cur_x += item_w + spacing
 
         # Draw Drag & Drop Indicators (Reorder insertion line or Group Merge aura)
         if getattr(self, "is_dragging_item", False):
@@ -3501,13 +3699,15 @@ class DockWindow:
             merge_mode = False
 
             n_pin = len(self.pinned_items)
+            src_type = self.pinned_items[self.pressed_idx].get("type") if (self.pressed_idx is not None and self.pressed_idx < n_pin) else None
+            src_groupable = src_type in ("app", "action", "group")
             for i, rect in enumerate(self.item_rects[:n_pin]):
                 center_x = (rect[0] + rect[2]) / 2.0
                 item_w = rect[2] - rect[0]
                 
-                # If hovering directly over another pinned app or group (excluding itself)
-                if abs(event.x - center_x) < (item_w * 0.42) and i != self.pressed_idx:
-                    if i < n_pin and self.pinned_items[i].get("type") in ("app", "group"):
+                # If hovering directly over another pinned app, system action, or group (excluding itself)
+                if src_groupable and abs(event.x - center_x) < (item_w * 0.42) and i != self.pressed_idx:
+                    if i < n_pin and self.pinned_items[i].get("type") in ("app", "group", "action"):
                         target_idx = i
                         merge_mode = True
                         break
@@ -3583,7 +3783,7 @@ class DockWindow:
                     self._execute_system_action(item.get("action_type"), anchor_rect=self.item_rects[idx])
                 elif it_type == "battery":
                     self._trigger_launch_effect(item.get("id"))
-                    os.startfile("ms-settings:batterysaver")
+                    self._open_power_options()
                 elif it_type == "clock":
                     self._trigger_launch_effect(item.get("id"))
                     os.startfile("ms-settings:dateandtime")
@@ -3604,12 +3804,18 @@ class DockWindow:
             from group_flyout import GroupFlyout
             def on_launch(sub_item):
                 self._trigger_launch_effect(group_item.get("id"))
-                self._launch_item(sub_item)
+                if sub_item.get("type") == "action":
+                    self._execute_system_action(sub_item.get("action_type"), anchor_rect=item_rect)
+                else:
+                    self._launch_item(sub_item)
             
-            def on_modified(action=None, group_id=None):
+            def on_modified(action=None, group_id=None, child_id=None):
                 if action == "ungroup" and group_id:
                     self.config_mgr.ungroup(group_id)
+                elif action == "extract" and group_id and child_id is not None:
+                    self.config_mgr.extract_from_group(group_id, child_id)
                 else:
+                    self.config_mgr._dirty_sections.add("items")
                     self.config_mgr.save()
                 self.reload_items()
                 self.update_geometry()
@@ -3783,6 +3989,16 @@ class DockWindow:
                 sec_item.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
                 sec_item.add_separator()
                 sec_item.add_command("Quitar del Dock", lambda: self._remove_item(item), danger=True)
+
+                sec_mv = menu.add_section("Mover a carpeta", expanded=False)
+                sec_mv.add_command("Crear nueva carpeta con este elemento...", lambda it=item: self._wrap_item_in_new_group(it))
+                existing_groups = [g for g in self.pinned_items if g.get("type") == "group"]
+                if existing_groups:
+                    sec_mv.add_separator()
+                    for grp in existing_groups:
+                        gid = grp.get("id")
+                        gname = grp.get("name", "Carpeta")
+                        sec_mv.add_command(f"Carpeta: {gname}", lambda it=item, target_gid=gid: self._move_item_to_existing_group(it, target_gid))
                 menu.add_separator()
             elif item.get("type") == "group":
                 wins, can_kill = self.get_matching_windows(item)
@@ -3801,6 +4017,15 @@ class DockWindow:
                 sec_grp.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
                 sec_grp.add_separator()
                 sec_grp.add_command("Quitar carpeta del Dock", lambda: self._remove_item(item), danger=True)
+
+                sec_grp_act = menu.add_section("Añadir acción a esta carpeta", expanded=False)
+                gid = item.get("id")
+                for act_entry in self._windows_action_menu_defs():
+                    if act_entry is None:
+                        sec_grp_act.add_separator()
+                    else:
+                        a_type, a_lbl, a_name, a_danger = act_entry
+                        sec_grp_act.add_command(a_lbl, lambda g=gid, t=a_type, n=a_name: self._add_system_action_to_group(g, t, n), danger=a_danger)
                 menu.add_separator()
             elif item.get("type") == "action":
                 menu.add_command(f"Ejecutar {item.get('name')}", lambda: self._execute_system_action(item.get("action_type")))
@@ -3813,6 +4038,16 @@ class DockWindow:
                 sec_act.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
                 sec_act.add_separator()
                 sec_act.add_command("Quitar del Dock", lambda: self._remove_item(item), danger=True)
+
+                sec_mv = menu.add_section("Mover a carpeta", expanded=False)
+                sec_mv.add_command("Crear nueva carpeta con esta acción...", lambda it=item: self._wrap_item_in_new_group(it))
+                existing_groups = [g for g in self.pinned_items if g.get("type") == "group"]
+                if existing_groups:
+                    sec_mv.add_separator()
+                    for grp in existing_groups:
+                        gid = grp.get("id")
+                        gname = grp.get("name", "Carpeta")
+                        sec_mv.add_command(f"Carpeta: {gname}", lambda it=item, target_gid=gid: self._move_item_to_existing_group(it, target_gid))
                 menu.add_separator()
             elif item.get("type") == "running_win":
                 wins, can_kill = self.get_matching_windows(item)
@@ -3829,15 +4064,22 @@ class DockWindow:
                 sec_bs = menu.add_section("Estilo de Batería en Dock", expanded=True)
                 for bst_id, bst_lbl in [("ring", "Anillo Circular"), ("bar", "Barra Clásica"), ("pill", "Píldora"), ("minimal", "Minimalista")]:
                     sec_bs.add_command(bst_lbl, lambda s=bst_id: self._set_dock_battery_style(s), checked=(cur_bs == bst_id))
-                menu.add_command("Configuración de Energía Windows...", lambda: os.startfile("ms-settings:batterysaver"))
+                menu.add_command("Configuración de Energía Windows...", self._open_power_options)
                 menu.add_command("Insertar separador aquí", lambda: self._insert_separator(idx))
                 menu.add_command("Quitar batería del Dock", lambda: self._remove_item(item), danger=True)
                 menu.add_separator()
             elif item.get("type") == "clock":
                 menu.add_header("Widget de Reloj en Dockbar")
-                cur_cs = (self.config_mgr.get("appearance", "dock_clock_style", "digital") or "digital").lower()
+                cur_cs = (self.config_mgr.get("appearance", "dock_clock_style", "wide_5_3") or "wide_5_3").lower()
                 sec_cs = menu.add_section("Estilo de Reloj en Dock", expanded=True)
-                for cst_id, cst_lbl in [("digital", "Digital Cristal"), ("analog", "Analógico"), ("neon", "Neón"), ("minimal", "Minimalista"), ("pill", "Píldora Azul")]:
+                for cst_id, cst_lbl in [
+                    ("wide_5_3", "Horizontal 5:3 (Grande)"),
+                    ("digital", "Digital Cristal (1:1)"),
+                    ("analog", "Analógico"),
+                    ("neon", "Neón"),
+                    ("minimal", "Minimalista"),
+                    ("pill", "Píldora Azul"),
+                ]:
                     sec_cs.add_command(cst_lbl, lambda s=cst_id: self._set_dock_clock_opt("dock_clock_style", s), checked=(cur_cs == cst_id))
                 menu.add_command("Formato 24 horas", lambda: self._set_dock_clock_opt("dock_clock_24h", not bool(self.config_mgr.get("appearance", "dock_clock_24h", True))), checked=bool(self.config_mgr.get("appearance", "dock_clock_24h", True)))
                 menu.add_command("Mostrar segundero", lambda: self._set_dock_clock_opt("dock_clock_seconds", not bool(self.config_mgr.get("appearance", "dock_clock_seconds", False))), checked=bool(self.config_mgr.get("appearance", "dock_clock_seconds", False)))
@@ -3854,6 +4096,7 @@ class DockWindow:
         clicked_empty = not (idx is not None and 0 <= idx < len(self.items))
         sec_add = menu.add_section("Añadir a la Dockbar", expanded=clicked_empty)
         sec_add.add_command("Añadir programa o archivo...", self._add_item_manually)
+        sec_add.add_command("Crear nueva carpeta...", self._create_empty_group)
         sec_add.add_command("Widget: Reloj y Fecha en Dockbar", self._add_clock_dock_item)
         sec_add.add_command("Widget: Porcentaje de Batería", self._add_battery_dock_item)
         sec_add.add_command("Botón: Lanzador de Apps (Inicio)", lambda: self._add_system_action("app_launcher", "Aplicaciones"))
@@ -3863,19 +4106,14 @@ class DockWindow:
         sec_add.add_command("Botón: Detener Dockbar", lambda: self._add_system_action("dock_exit", "Detener Dock"))
 
         sec_win = menu.add_section("Acciones de Windows", expanded=False)
-        sec_win.add_command("Mostrar Escritorio", lambda: self._add_system_action("show_desktop", "Mostrar Escritorio"))
-        sec_win.add_command("Configuración de Pantalla", lambda: self._add_system_action("display_settings", "Pantalla"))
-        sec_win.add_command("Panel de Control", lambda: self._add_system_action("control_panel", "Panel de Control"))
-        sec_win.add_command("Desinstalar Aplicaciones", lambda: self._add_system_action("apps_features", "Desinstalar Apps"))
-        sec_win.add_command("Sonido y Volumen", lambda: self._add_system_action("sound_settings", "Sonido"))
-        sec_win.add_command("Red e Internet", lambda: self._add_system_action("network_settings", "Red"))
-        sec_win.add_command("Papelera de Reciclaje", lambda: self._add_system_action("recycle_bin", "Papelera"))
-        sec_win.add_command("Recortes", lambda: self._add_system_action("snipping_tool", "Recortes"))
-        sec_win.add_command("Bloquear Equipo", lambda: self._add_system_action("lock_pc", "Bloquear Equipo"))
+        sec_win.add_command("Carpeta: Energía (Apagar, Reiniciar, Bloquear...)", self._add_power_actions_group)
         sec_win.add_separator()
-        sec_win.add_command("Cerrar Sesión", lambda: self._add_system_action("logoff_pc", "Cerrar Sesión"))
-        sec_win.add_command("Reiniciar Equipo", lambda: self._add_system_action("restart_pc", "Reiniciar"))
-        sec_win.add_command("Apagar Equipo", lambda: self._add_system_action("shutdown_pc", "Apagar"), danger=True)
+        for act_entry in self._windows_action_menu_defs():
+            if act_entry is None:
+                sec_win.add_separator()
+            else:
+                a_type, a_lbl, a_name, a_danger = act_entry
+                sec_win.add_command(a_lbl, lambda t=a_type, n=a_name: self._add_system_action(t, n), danger=a_danger)
 
         menu.add_separator()
         menu.add_command("Configuración de Alioth Dockbar...", self._open_settings)
@@ -3895,6 +4133,12 @@ class DockWindow:
         return None
 
     def _launch_item(self, item):
+        if item.get("type") == "action":
+            it_id = item.get("id")
+            if it_id:
+                self._trigger_launch_effect(it_id)
+            self._execute_system_action(item.get("action_type"))
+            return
         target = item.get("target", "")
         args = item.get("args", "")
         if not target:
@@ -3932,6 +4176,27 @@ class DockWindow:
         if target and os.path.exists(target):
             subprocess.Popen(f'explorer.exe /select,"{os.path.abspath(target)}"')
 
+    @staticmethod
+    def _windows_action_menu_defs():
+        return [
+            ("show_desktop", "Mostrar Escritorio", "Mostrar Escritorio", False),
+            ("display_settings", "Configuración de Pantalla", "Pantalla", False),
+            ("control_panel", "Panel de Control", "Panel de Control", False),
+            ("settings", "Configuración de Windows", "Configuración", False),
+            ("apps_features", "Desinstalar Aplicaciones", "Desinstalar Apps", False),
+            ("sound_settings", "Sonido y Volumen", "Sonido", False),
+            ("network_settings", "Red e Internet", "Red", False),
+            ("bluetooth_settings", "Bluetooth y Dispositivos", "Bluetooth", False),
+            ("taskmgr", "Administrador de Tareas", "Admin. Tareas", False),
+            ("recycle_bin", "Papelera de Reciclaje", "Papelera", False),
+            ("snipping_tool", "Recortes", "Recortes", False),
+            None,
+            ("lock_pc", "Bloquear Equipo", "Bloquear Equipo", False),
+            ("logoff_pc", "Cerrar Sesión", "Cerrar Sesión", False),
+            ("restart_pc", "Reiniciar Equipo", "Reiniciar", False),
+            ("shutdown_pc", "Apagar Equipo", "Apagar", True),
+        ]
+
     def _add_system_action(self, action_type, name):
         new_act = {
             "type": "action",
@@ -3941,6 +4206,83 @@ class DockWindow:
         self.config_mgr.add_item(new_act)
         self.reload_items()
         self.update_geometry()
+
+    def _add_system_action_to_group(self, group_id, action_type, name):
+        new_act = {
+            "id": str(uuid.uuid4()),
+            "type": "action",
+            "name": name,
+            "action_type": action_type
+        }
+        self.config_mgr.add_child_to_group(group_id, new_act)
+        self.reload_items()
+        self.update_geometry()
+        self._render_composite_dock()
+
+    def _create_empty_group(self):
+        name = simpledialog.askstring("Nueva Carpeta", "Nombre de la nueva carpeta:", initialvalue="Acciones de Windows")
+        if name is None or not name.strip():
+            return
+        self.config_mgr.create_group(name=name.strip(), items_list=[])
+        self.reload_items()
+        self.update_geometry()
+
+    def _add_power_actions_group(self):
+        power_items = [
+            {"id": str(uuid.uuid4()), "type": "action", "name": "Bloquear Equipo", "action_type": "lock_pc"},
+            {"id": str(uuid.uuid4()), "type": "action", "name": "Cerrar Sesión", "action_type": "logoff_pc"},
+            {"id": str(uuid.uuid4()), "type": "action", "name": "Reiniciar", "action_type": "restart_pc"},
+            {"id": str(uuid.uuid4()), "type": "action", "name": "Apagar", "action_type": "shutdown_pc"},
+        ]
+        self.config_mgr.create_group(name="Energía", items_list=power_items)
+        self.reload_items()
+        self.update_geometry()
+
+    def _wrap_item_in_new_group(self, item):
+        it_id = item.get("id")
+        if not it_id:
+            return
+        default_name = "Energía" if item.get("action_type") in ("shutdown_pc", "restart_pc", "logoff_pc", "lock_pc") else (
+            "Acciones de Windows" if item.get("type") == "action" else f"Grupo ({item.get('name', 'Apps')})"
+        )
+        name = simpledialog.askstring("Nueva Carpeta", "Nombre de la carpeta:", initialvalue=default_name)
+        if name is None or not name.strip():
+            return
+        items = self.config_mgr.get_items()
+        for i, it in enumerate(items):
+            if it.get("id") == it_id:
+                new_group = {
+                    "id": str(uuid.uuid4()),
+                    "type": "group",
+                    "name": name.strip(),
+                    "icon_path": "",
+                    "items": [it],
+                }
+                items[i] = new_group
+                self.config_mgr.set_items(items)
+                self.reload_items()
+                self.update_geometry()
+                return
+
+    def _move_item_to_existing_group(self, item, target_group_id):
+        it_id = item.get("id")
+        if not it_id or not target_group_id:
+            return
+        self.config_mgr.move_item_to_group(it_id, target_group_id)
+        self.reload_items()
+        self.update_geometry()
+
+    def _open_power_options(self):
+        for uri in ("ms-settings:powersleep", "ms-settings:batterysaver"):
+            try:
+                os.startfile(uri)
+                return
+            except Exception:
+                pass
+        try:
+            subprocess.Popen(["control.exe", "powercfg.cpl"])
+        except Exception:
+            pass
 
     def _add_battery_dock_item(self):
         new_bat = {"type": "battery", "name": "Batería"}
@@ -3962,6 +4304,8 @@ class DockWindow:
     def _set_dock_clock_opt(self, key, val):
         self.config_mgr.set("appearance", key, val)
         self._clock_icon_cache = None
+        if key == "dock_clock_style":
+            self.update_geometry()
         self._dirty = True
 
     def _restore_original_icon(self, item):

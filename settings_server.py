@@ -821,18 +821,174 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
         elif path == "/api/add_action":
             action_type = payload.get("action_type")
             name = payload.get("name")
+            group_idx = payload.get("group_index")
             if _config_mgr_ref and action_type:
                 new_act = {
+                    "id": str(uuid.uuid4()),
                     "type": "action",
                     "name": name or action_type.replace("_", " ").title(),
                     "action_type": action_type
                 }
-                _config_mgr_ref.add_item(new_act)
+                if group_idx is not None:
+                    items = _config_mgr_ref.get_items()
+                    gidx = int(group_idx)
+                    if 0 <= gidx < len(items) and items[gidx].get("type") == "group":
+                        _config_mgr_ref.add_child_to_group(items[gidx].get("id"), new_act)
+                    else:
+                        self._send_json({"error": "Invalid group index"}, 400)
+                        return
+                else:
+                    _config_mgr_ref.add_item(new_act)
                 if _on_applied_ref:
                     _on_applied_ref()
                 self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
             else:
                 self._send_json({"error": "Invalid action"}, 400)
+            return
+
+        elif path == "/api/create_group":
+            try:
+                if not _config_mgr_ref:
+                    self._send_json({"error": "No config manager"}, 500)
+                    return
+                name = (payload.get("name") or "Nueva Carpeta").strip() or "Nueva Carpeta"
+                preset = payload.get("preset")
+                wrap_index = payload.get("wrap_index")
+                if preset == "power":
+                    power_items = [
+                        {"id": str(uuid.uuid4()), "type": "action", "name": "Bloquear Equipo", "action_type": "lock_pc"},
+                        {"id": str(uuid.uuid4()), "type": "action", "name": "Cerrar Sesión", "action_type": "logoff_pc"},
+                        {"id": str(uuid.uuid4()), "type": "action", "name": "Reiniciar", "action_type": "restart_pc"},
+                        {"id": str(uuid.uuid4()), "type": "action", "name": "Apagar", "action_type": "shutdown_pc"},
+                    ]
+                    _config_mgr_ref.create_group(name=name or "Energía", items_list=power_items)
+                elif wrap_index is not None:
+                    items = _config_mgr_ref.get_items()
+                    widx = int(wrap_index)
+                    if 0 <= widx < len(items) and items[widx].get("type") in ("app", "action"):
+                        wrapped = items[widx]
+                        items[widx] = {
+                            "id": str(uuid.uuid4()),
+                            "type": "group",
+                            "name": name,
+                            "icon_path": "",
+                            "items": [wrapped],
+                        }
+                        _config_mgr_ref.set_items(items)
+                    else:
+                        self._send_json({"error": "Invalid wrap index"}, 400)
+                        return
+                else:
+                    _config_mgr_ref.create_group(name=name, items_list=payload.get("items") or [])
+                if _on_applied_ref:
+                    _on_applied_ref()
+                self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/merge_into_group":
+            try:
+                src = payload.get("from")
+                dst = payload.get("to")
+                group_name = payload.get("name") or "Nuevo Grupo"
+                if _config_mgr_ref and src is not None and dst is not None:
+                    res_id = _config_mgr_ref.merge_into_group(int(src), int(dst), group_name=group_name)
+                    if not res_id:
+                        self._send_json({"error": "Cannot merge these items"}, 400)
+                        return
+                    if _on_applied_ref:
+                        _on_applied_ref()
+                    self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+                else:
+                    self._send_json({"error": "Invalid merge indices"}, 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/extract_from_group":
+            try:
+                gidx = payload.get("group_index")
+                cidx = payload.get("child_index")
+                if _config_mgr_ref and gidx is not None and cidx is not None:
+                    items = _config_mgr_ref.get_items()
+                    gi = int(gidx)
+                    if 0 <= gi < len(items) and items[gi].get("type") == "group":
+                        _config_mgr_ref.extract_from_group(items[gi].get("id"), int(cidx))
+                        if _on_applied_ref:
+                            _on_applied_ref()
+                        self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+                        return
+                self._send_json({"error": "Invalid group or child index"}, 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/delete_child":
+            try:
+                gidx = payload.get("group_index")
+                cidx = payload.get("child_index")
+                if _config_mgr_ref and gidx is not None and cidx is not None:
+                    items = _config_mgr_ref.get_items()
+                    gi, ci = int(gidx), int(cidx)
+                    if 0 <= gi < len(items) and items[gi].get("type") == "group":
+                        children = items[gi].setdefault("items", items[gi].get("children", []))
+                        if 0 <= ci < len(children):
+                            children.pop(ci)
+                            _config_mgr_ref.set_items(items)
+                            if _on_applied_ref:
+                                _on_applied_ref()
+                            self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+                            return
+                self._send_json({"error": "Invalid group or child index"}, 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/ungroup":
+            try:
+                idx = payload.get("index")
+                if _config_mgr_ref and idx is not None:
+                    items = _config_mgr_ref.get_items()
+                    i = int(idx)
+                    if 0 <= i < len(items) and items[i].get("type") == "group":
+                        _config_mgr_ref.ungroup(items[i].get("id"))
+                        if _on_applied_ref:
+                            _on_applied_ref()
+                        self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+                        return
+                self._send_json({"error": "Invalid group index"}, 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+            return
+
+        elif path == "/api/rename_item":
+            try:
+                idx = payload.get("index")
+                cidx = payload.get("child_index")
+                name = (payload.get("name") or "").strip()
+                if _config_mgr_ref and idx is not None and name:
+                    items = _config_mgr_ref.get_items()
+                    i = int(idx)
+                    if 0 <= i < len(items):
+                        if cidx is not None:
+                            children = items[i].get("items", items[i].get("children", []))
+                            ci = int(cidx)
+                            if 0 <= ci < len(children):
+                                children[ci]["name"] = name
+                            else:
+                                self._send_json({"error": "Invalid child index"}, 400)
+                                return
+                        else:
+                            items[i]["name"] = name
+                        _config_mgr_ref.set_items(items)
+                        if _on_applied_ref:
+                            _on_applied_ref()
+                        self._send_json({"status": "ok", "items": _config_mgr_ref.get_items()})
+                        return
+                self._send_json({"error": "Invalid rename params"}, 400)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
             return
 
         elif path == "/api/preview_launch_effect":

@@ -433,7 +433,23 @@ def generate_group_icon(group_item, size=128):
 
     sub_items = group_item.get("children", group_item.get("items", []))
     if not sub_items:
-        return create_fallback_icon(group_item.get("name", "G"), size=size)
+        # Draw a crisp empty-folder vector silhouette inside the frosted glass tile
+        s = size / 128.0
+        ed = ImageDraw.Draw(base_tile, "RGBA")
+        # Folder tab + body
+        ed.rounded_rectangle(
+            [int(26 * s), int(36 * s), int(62 * s), int(56 * s)],
+            radius=max(3, int(6 * s)),
+            fill=(96, 165, 250, 210),
+        )
+        ed.rounded_rectangle(
+            [int(26 * s), int(46 * s), int(102 * s), int(94 * s)],
+            radius=max(4, int(10 * s)),
+            fill=(59, 130, 246, 225),
+            outline=(191, 219, 254, 200),
+            width=max(1, int(2 * s)),
+        )
+        return base_tile
 
     # 2x2 grid for up to 4 crisp mini icons
     inner_pad = int(size * 0.14)

@@ -3265,6 +3265,98 @@ class BatteryWidget(BaseDesktopWidget):
     def __init__(self, root, config_mgr, on_open_settings=None):
         super().__init__(root, config_mgr, "battery", default_x=320, default_y=50, default_w=246, default_h=102, on_open_settings=on_open_settings)
         self._last_bat_sig = None
+        self._pct_hit_rect = (0, 0, 0, 0)
+        self._press_x = 0
+        self._press_y = 0
+        self._press_moved = False
+        self._pressed_on_pct = False
+
+    def _open_power_settings(self):
+        for uri in ("ms-settings:powersleep", "ms-settings:batterysaver"):
+            try:
+                os.startfile(uri)
+                return
+            except Exception:
+                pass
+        try:
+            subprocess.Popen(["control.exe", "powercfg.cpl"])
+        except Exception:
+            pass
+
+    def _hit_pct_area(self, x, y):
+        r = getattr(self, "_pct_hit_rect", (0, 0, 0, 0))
+        return r[2] > r[0] and r[0] <= x <= r[2] and r[1] <= y <= r[3]
+
+    def _on_base_motion(self, event):
+        if self.is_resizing or self.is_dragging:
+            return
+        rdir = self._detect_resize_dir(event.x, event.y)
+        if rdir:
+            self._set_cursor(self._RESIZE_CURSORS.get(rdir, ""))
+        elif not self._hit_min_button(event.x, event.y) and self._hit_pct_area(event.x, event.y):
+            self._set_cursor("hand2")
+        else:
+            self._set_cursor("")
+        if rdir != self._hover_resize_dir:
+            self._hover_resize_dir = rdir
+            if not bool(self.get_cfg("lock_position", False)) and not self._is_collapsed_view():
+                self._redraw_now()
+
+    def _on_drag_start(self, event):
+        self._press_x = event.x_root
+        self._press_y = event.y_root
+        self._press_moved = False
+        self._pressed_on_pct = (not self._hit_min_button(event.x, event.y)) and self._hit_pct_area(event.x, event.y)
+        super()._on_drag_start(event)
+
+    def _on_drag_move(self, event):
+        if abs(event.x_root - self._press_x) > 5 or abs(event.y_root - self._press_y) > 5:
+            self._press_moved = True
+        super()._on_drag_move(event)
+
+    def _on_drag_end(self, event):
+        was_resizing = self.is_resizing
+        should_open_power = (
+            self._pressed_on_pct
+            and not self._press_moved
+            and not was_resizing
+            and not self._hit_min_button(event.x, event.y)
+            and self._hit_pct_area(event.x, event.y)
+        )
+        self._pressed_on_pct = False
+        super()._on_drag_end(event)
+        if should_open_power:
+            self._open_power_settings()
+
+    def _fit_text(self, draw, text, base_px, max_w, max_h=None, bold_default=False, min_px=8):
+        """
+        Resolves styled font scaled down cleanly until `text` fits strictly within `max_w` (and optional `max_h`),
+        truncating with '…' only if still wider at `min_px`, so text NEVER overflows the Battery widget.
+        """
+        fam = self.get_cfg("font_family", None) or "Segoe UI"
+        bold_cfg = self.get_cfg("font_bold", None)
+        italic_cfg = self.get_cfg("font_italic", None)
+        use_bold = bool(bold_cfg) if bold_cfg is not None else bool(bold_default)
+        use_italic = bool(italic_cfg) if italic_cfg is not None else False
+        start_px = max(min_px, int(round(float(base_px) * self._get_font_scale())))
+        max_w = max(16.0, float(max_w))
+        chosen_font = None
+        for px in range(start_px, min_px - 1, -1):
+            f = resolve_styled_font(fam, px, bold=use_bold, italic=use_italic)
+            tw = draw.textlength(text, font=f)
+            th_ok = True
+            if max_h is not None:
+                bb = draw.textbbox((0, 0), text, font=f)
+                th_ok = (bb[3] - bb[1]) <= max_h
+            if tw <= max_w and th_ok:
+                chosen_font = f
+                return chosen_font, text
+            chosen_font = f
+        # Fallback: ellipsize cleanly at min_px
+        disp = text
+        while len(disp) > 1 and draw.textlength(disp + "…", font=chosen_font) > max_w:
+            disp = disp[:-1]
+        return chosen_font, (disp.rstrip() + "…" if disp != text else disp)
 
     def _start_update_loop(self):
         self._update_stats()
@@ -3343,6 +3435,8 @@ class BatteryWidget(BaseDesktopWidget):
         if self._is_collapsed_view():
             st_txt = f"{pct}% {'⚡' if charging else ''}".strip() if has_bat else "AC"
             self._render_collapsed_pill("Batería", st_txt, accent_rgb=accent_rgb)
+            # In collapsed mode, clicking the pill body (excluding minimize button) opens Power Options
+            self._pct_hit_rect = (0, 0, max(0, self.win_w - 32), self.win_h)
             return
 
         if not self.is_resizing:
@@ -3369,7 +3463,7 @@ class BatteryWidget(BaseDesktopWidget):
         composite = self._build_card_surface(w, h, accent_rgb=accent_rgb)
         draw = ImageDraw.Draw(composite, "RGBA")
 
-        pad = max(10, int(14 * s))
+        pad = max(8, int(12 * s))
         btn_s = max(16, int(18 * s))
         self._draw_min_button(composite, draw, w - pad - btn_s, pad - 2, w - pad, pad - 2 + btn_s, is_collapsed=False)
 
@@ -3393,27 +3487,28 @@ class BatteryWidget(BaseDesktopWidget):
                 st_label = "En batería"
                 mode_badge = "Normal"
 
-        f_big = self._get_styled_font(max(15, int(24 * s)), bold_default=True)
-        f_med = self._get_styled_font(max(12, int(16 * s)), bold_default=True)
-        f_title = self._get_styled_font(max(9, int(10 * s)), bold_default=True)
-        f_sub = self._get_styled_font(max(9, int(10.5 * s)), bold_default=False)
-        f_badge = self._get_styled_font(max(8, int(9 * s)), bold_default=True)
-
-        # Update every style's frosted-track mask calls to pass solid 255 to mask ImageDraw
         # Frosted dark-slate outline highlight for spent track regions
         frosted_base = 255
         frosted_sheen = 255
+        self._pct_hit_rect = (0, 0, 0, 0)
 
         if style == "barra":
             tx = pad
-            draw.text((tx, pad), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
-            draw.text((tx, pad + int(16 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            bar_x1 = pad + int(84 * s)
+            bar_x2 = w - pad - btn_s - int(10 * s)
+            left_max_w = max(44, bar_x1 - tx - 6)
+            f_t, t_txt = self._fit_text(draw, "BATERÍA", max(9, int(10 * s)), left_max_w, max_h=max(11, int(14 * s)), bold_default=True)
+            draw.text((tx, pad), t_txt, fill=(148, 163, 184, 235), font=f_t)
+            f_p, p_txt = self._fit_text(draw, pct_label, max(15, int(24 * s)), left_max_w, max_h=max(18, int(30 * s)), bold_default=True)
+            pct_y = pad + int(16 * s)
+            draw.text((tx, pct_y), p_txt, fill=(248, 250, 252, 255), font=f_p)
+            p_bb = draw.textbbox((tx, pct_y), p_txt, font=f_p)
+            self._pct_hit_rect = (max(0, p_bb[0] - 6), max(0, p_bb[1] - 4), min(w, p_bb[2] + 6), min(h, p_bb[3] + 4))
             if show_sub:
-                draw.text((tx, h - pad - int(14 * s)), st_label, fill=(*accent_rgb, 245), font=f_sub)
-            bar_x1 = pad + int(86 * s)
-            bar_x2 = w - pad - btn_s - int(12 * s)
+                f_s, s_txt = self._fit_text(draw, st_label, max(9, int(10.5 * s)), w - pad * 2, max_h=max(11, int(15 * s)), bold_default=False)
+                draw.text((tx, h - pad - max(11, int(14 * s))), s_txt, fill=(*accent_rgb, 245), font=f_s)
             bar_h = max(18, int(26 * s))
-            bar_y1 = (h - bar_h) // 2 + int(4 * s)
+            bar_y1 = (h - bar_h) // 2 + int(2 * s)
             bar_y2 = bar_y1 + bar_h
             if bar_x2 > bar_x1 + 28:
                 self._composite_frosted_track(
@@ -3448,17 +3543,26 @@ class BatteryWidget(BaseDesktopWidget):
             if span > 0:
                 draw.arc([ax1, ay1, ax2, ay2], start=180, end=180 + span, fill=(*accent_rgb, 250), width=th)
             cx_a = (ax1 + ax2) / 2.0
-            draw.text((cx_a, ay1 + arc_d * 0.34), pct_label, fill=(248, 250, 252, 255), font=f_big, anchor="mm")
+            f_p, p_txt = self._fit_text(draw, pct_label, max(15, int(24 * s)), arc_d - th * 2 - 12, max_h=max(16, int(arc_d * 0.34)), bold_default=True)
+            draw.text((cx_a, ay1 + arc_d * 0.34), p_txt, fill=(248, 250, 252, 255), font=f_p, anchor="mm")
+            self._pct_hit_rect = (ax1, ay1, ax2, min(h, ay1 + arc_d // 2 + 8))
             if show_sub:
-                draw.text((cx_a, h - pad - int(7 * s)), f"{st_label}  •  {mode_badge}", fill=(203, 213, 225, 235), font=f_sub, anchor="mm")
+                sub_combo = f"{st_label}  •  {mode_badge}"
+                f_s, s_txt = self._fit_text(draw, sub_combo, max(9, int(10.5 * s)), w - pad * 2, max_h=max(11, int(15 * s)), bold_default=False)
+                draw.text((cx_a, h - pad - int(7 * s)), s_txt, fill=(203, 213, 225, 235), font=f_s, anchor="mm")
 
         elif style == "segmentado":
             # 10 segmented glowing cells; spent cells use frosted-blurred smoked glass
-            draw.text((pad, pad), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
-            draw.text((w - pad - btn_s - int(8 * s), pad + int(7 * s)), pct_label, fill=(248, 250, 252, 255), font=f_med, anchor="rm")
-            seg_y1 = pad + int(28 * s)
-            seg_y2 = h - pad - (int(20 * s) if show_sub else int(4 * s))
-            seg_y2 = max(seg_y1 + 14, seg_y2)
+            hdr_right = w - pad - btn_s - int(8 * s)
+            f_t, t_txt = self._fit_text(draw, "BATERÍA", max(9, int(10 * s)), max(48, (hdr_right - pad) * 0.55), max_h=max(12, int(15 * s)), bold_default=True)
+            draw.text((pad, pad), t_txt, fill=(148, 163, 184, 235), font=f_t)
+            f_p, p_txt = self._fit_text(draw, pct_label, max(12, int(16 * s)), max(36, (hdr_right - pad) * 0.45), max_h=max(14, int(20 * s)), bold_default=True)
+            draw.text((hdr_right, pad + int(7 * s)), p_txt, fill=(248, 250, 252, 255), font=f_p, anchor="rm")
+            pw_s = int(draw.textlength(p_txt, font=f_p))
+            self._pct_hit_rect = (max(0, hdr_right - pw_s - 8), max(0, pad - 4), min(w, hdr_right + 6), min(h, pad + int(22 * s)))
+            seg_y1 = pad + int(26 * s)
+            seg_y2 = h - pad - (int(19 * s) if show_sub else int(4 * s))
+            seg_y2 = max(seg_y1 + 12, seg_y2)
             n_segs = 10
             gap = max(3, int(4 * s))
             total_w = w - pad * 2
@@ -3480,16 +3584,18 @@ class BatteryWidget(BaseDesktopWidget):
                 sx1 = pad + i * (seg_w + gap)
                 alpha_rounded_rect(composite, [sx1, seg_y1, sx1 + seg_w, seg_y2], radius=max(3, int(4 * s)), fill=(*accent_rgb, 240), outline=(255, 255, 255, 95), width=1)
             if show_sub:
-                draw.text((pad, h - pad - int(11 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
-                draw.text((w - pad, h - pad - int(11 * s)), mode_badge, fill=(*accent_rgb, 240), font=f_badge, anchor="rt")
+                f_b, b_txt = self._fit_text(draw, mode_badge, max(8, int(9 * s)), max(36, (w - pad * 2) * 0.36), max_h=max(11, int(14 * s)), bold_default=True)
+                bw_b = draw.textlength(b_txt, font=f_b)
+                f_s, s_txt = self._fit_text(draw, st_label, max(9, int(10.5 * s)), max(40, w - pad * 2 - bw_b - 8), max_h=max(11, int(14 * s)), bold_default=False)
+                draw.text((pad, h - pad - int(11 * s)), s_txt, fill=(203, 213, 225, 235), font=f_s)
+                draw.text((w - pad, h - pad - int(11 * s)), b_txt, fill=(*accent_rgb, 240), font=f_b, anchor="rt")
 
         elif style == "vertical":
             # Tall vertical liquid battery capsule on left with frosted-blurred empty top + clean % right
-            vw = max(28, int(38 * s))
-            vh = max(46, h - pad * 2 - int(4 * s))
+            vw = max(26, int(36 * s))
+            vh = max(44, h - pad * 2 - int(4 * s))
             vx1, vy1 = pad + int(4 * s), (h - vh) // 2 + int(2 * s)
             vx2, vy2 = vx1 + vw, vy1 + vh
-            # Cathode cap on top
             cap_w = vw // 2
             draw.rounded_rectangle([vx1 + (vw - cap_w) // 2, vy1 - max(4, int(5 * s)), vx1 + (vw + cap_w) // 2, vy1 + 1], radius=2, fill=(148, 163, 184, 215))
             self._composite_frosted_track(
@@ -3501,11 +3607,19 @@ class BatteryWidget(BaseDesktopWidget):
             inner_h = max(4, vh - 8)
             fill_h = max(4, int(inner_h * (pct / 100.0)))
             alpha_rounded_rect(composite, [vx1 + 4, vy2 - 4 - fill_h, vx2 - 4, vy2 - 4], radius=max(3, int(5 * s)), fill=(*accent_rgb, 240))
-            tx = vx2 + int(16 * s)
-            draw.text((tx, pad + int(2 * s)), "BATERÍA", fill=(148, 163, 184, 235), font=f_title)
-            draw.text((tx, pad + int(18 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
+            tx = vx2 + max(10, int(14 * s))
+            max_tx_w = max(36, w - pad - tx)
+            title_max_w = max(30, (w - pad - btn_s - 6) - tx)
+            f_t, t_txt = self._fit_text(draw, "BATERÍA", max(9, int(10 * s)), title_max_w, max_h=max(11, int(14 * s)), bold_default=True)
+            draw.text((tx, pad + int(1 * s)), t_txt, fill=(148, 163, 184, 235), font=f_t)
+            f_p, p_txt = self._fit_text(draw, pct_label, max(15, int(23 * s)), max_tx_w, max_h=max(18, int(28 * s)), bold_default=True)
+            pct_y = pad + int(16 * s)
+            draw.text((tx, pct_y), p_txt, fill=(248, 250, 252, 255), font=f_p)
+            p_bb = draw.textbbox((tx, pct_y), p_txt, font=f_p)
+            self._pct_hit_rect = (min(vx1, p_bb[0] - 4), min(vy1, p_bb[1] - 4), max(vx2, p_bb[2] + 6), max(vy2, p_bb[3] + 4))
             if show_sub:
-                draw.text((tx, h - pad - int(15 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
+                f_s, s_txt = self._fit_text(draw, st_label, max(9, int(10.5 * s)), max_tx_w, max_h=max(11, int(15 * s)), bold_default=False)
+                draw.text((tx, h - pad - max(11, int(14 * s))), s_txt, fill=(203, 213, 225, 235), font=f_s)
 
         elif style == "pildora":
             bar_h = max(26, int(38 * s))
@@ -3522,21 +3636,35 @@ class BatteryWidget(BaseDesktopWidget):
             draw.rounded_rectangle([bar_x1, bar_y1, bar_x2, bar_y2], radius=bar_h // 2, outline=(*accent_rgb, 175), width=2)
             fill_w = max(bar_h - 8, int((bar_x2 - bar_x1 - 8) * (pct / 100.0)))
             alpha_rounded_rect(composite, [bar_x1 + 4, bar_y1 + 4, bar_x1 + 4 + fill_w, bar_y2 - 4], radius=(bar_h - 8) // 2, fill=(*accent_rgb, 215))
-            draw.text((bar_x1 + int(14 * s), (bar_y1 + bar_y2) // 2), pct_label, fill=(255, 255, 255, 255), font=f_med, anchor="lm")
-            if show_sub and (bar_x2 - bar_x1) > 120:
-                draw.text((bar_x2 - int(12 * s), (bar_y1 + bar_y2) // 2), st_label, fill=(241, 245, 249, 240), font=f_sub, anchor="rm")
+            inner_w = max(36, bar_x2 - bar_x1 - int(24 * s))
+            f_p, p_txt = self._fit_text(draw, pct_label, max(12, int(16 * s)), inner_w * 0.44, max_h=bar_h - 8, bold_default=True)
+            draw.text((bar_x1 + int(12 * s), (bar_y1 + bar_y2) // 2), p_txt, fill=(255, 255, 255, 255), font=f_p, anchor="lm")
+            self._pct_hit_rect = (bar_x1, bar_y1, bar_x2, bar_y2)
+            if show_sub and (bar_x2 - bar_x1) > 105:
+                pw_p = draw.textlength(p_txt, font=f_p)
+                rem_w = max(28, inner_w - pw_p - 10)
+                f_s, s_txt = self._fit_text(draw, st_label, max(9, int(10.5 * s)), rem_w, max_h=bar_h - 10, bold_default=False)
+                draw.text((bar_x2 - int(10 * s), (bar_y1 + bar_y2) // 2), s_txt, fill=(241, 245, 249, 240), font=f_s, anchor="rm")
 
         elif style == "tarjeta":
             # Executive card: title + single % + full-width frosted progress bar + status footer
-            draw.text((pad, pad), "ENERGÍA DEL EQUIPO", fill=(148, 163, 184, 235), font=f_title)
-            draw.text((pad, pad + int(15 * s)), pct_label, fill=(248, 250, 252, 255), font=f_big)
-            bw = int(draw.textlength(mode_badge, font=f_badge)) + int(14 * s)
+            title_max_w = max(60, w - pad * 2 - btn_s - 8)
+            f_t, t_txt = self._fit_text(draw, "ENERGÍA DEL EQUIPO", max(9, int(10 * s)), title_max_w, max_h=max(11, int(14 * s)), bold_default=True)
+            draw.text((pad, pad), t_txt, fill=(148, 163, 184, 235), font=f_t)
             bx2_b = w - pad - btn_s - int(8 * s)
-            if bx2_b - bw > pad + int(70 * s):
-                alpha_rounded_rect(composite, [bx2_b - bw, pad + int(22 * s), bx2_b, pad + int(40 * s)], radius=int(8 * s), fill=(*accent_rgb, 55), outline=(*accent_rgb, 190), width=1)
-                draw.text((bx2_b - bw / 2.0, pad + int(31 * s)), mode_badge, fill=(248, 250, 252, 250), font=f_badge, anchor="mm")
-            bar_h = max(10, int(13 * s))
-            bar_y1 = h - pad - (int(24 * s) if show_sub else int(12 * s))
+            f_b, b_txt = self._fit_text(draw, mode_badge, max(8, int(9 * s)), max(34, (w - pad * 2) * 0.36), max_h=max(11, int(14 * s)), bold_default=True)
+            bw = int(draw.textlength(b_txt, font=f_b)) + int(14 * s)
+            pct_max_w = max(44, (bx2_b - bw - 8) - pad) if (bx2_b - bw > pad + int(56 * s)) else (w - pad * 2)
+            f_p, p_txt = self._fit_text(draw, pct_label, max(15, int(23 * s)), pct_max_w, max_h=max(18, int(28 * s)), bold_default=True)
+            pct_y = pad + int(15 * s)
+            draw.text((pad, pct_y), p_txt, fill=(248, 250, 252, 255), font=f_p)
+            p_bb = draw.textbbox((pad, pct_y), p_txt, font=f_p)
+            self._pct_hit_rect = (max(0, p_bb[0] - 6), max(0, p_bb[1] - 4), min(w, p_bb[2] + 8), min(h, p_bb[3] + 4))
+            if bx2_b - bw > pad + int(56 * s):
+                alpha_rounded_rect(composite, [bx2_b - bw, pad + int(20 * s), bx2_b, pad + int(38 * s)], radius=int(8 * s), fill=(*accent_rgb, 55), outline=(*accent_rgb, 190), width=1)
+                draw.text((bx2_b - bw / 2.0, pad + int(29 * s)), b_txt, fill=(248, 250, 252, 250), font=f_b, anchor="mm")
+            bar_h = max(10, int(12 * s))
+            bar_y1 = h - pad - (int(22 * s) if show_sub else int(12 * s))
             bar_y2 = bar_y1 + bar_h
             self._composite_frosted_track(
                 composite,
@@ -3547,17 +3675,18 @@ class BatteryWidget(BaseDesktopWidget):
             fw_t = max(bar_h, int((w - pad * 2) * (pct / 100.0)))
             alpha_rounded_rect(composite, [pad, bar_y1, pad + fw_t, bar_y2], radius=bar_h // 2, fill=(*accent_rgb, 245))
             if show_sub:
-                draw.text((pad, h - pad - int(10 * s)), st_label, fill=(203, 213, 225, 235), font=f_sub)
+                f_s, s_txt = self._fit_text(draw, st_label, max(9, int(10.5 * s)), w - pad * 2, max_h=max(11, int(14 * s)), bold_default=False)
+                draw.text((pad, h - pad - int(10 * s)), s_txt, fill=(203, 213, 225, 235), font=f_s)
 
         else:
-            # "anillo" & "neon": Frosted-blurred smoked donut track + SINGLE % inside ring (zero redundancy!)
-            ring_d = min(h - pad * 2, int(72 * s))
+            # "anillo" & "neon": Frosted-blurred smoked donut track + SINGLE % inside ring (zero overflow!)
+            ring_d = min(h - pad * 2, int(70 * s))
             ring_d = max(44, ring_d)
             rx1 = pad
             ry1 = (h - ring_d) // 2
             rx2 = rx1 + ring_d
             ry2 = ry1 + ring_d
-            thick = max(6, int((8 if style == "neon" else 7) * s))
+            thick = max(5, int((8 if style == "neon" else 7) * s))
 
             # Heavy real optical frosted-blur spent track ring + frosted dark center disk
             self._composite_frosted_track(
@@ -3573,19 +3702,48 @@ class BatteryWidget(BaseDesktopWidget):
                 draw.arc([rx1 - 2, ry1 - 2, rx2 + 2, ry2 + 2], start=-90, end=-90 + span, fill=(*accent_rgb, 95), width=thick + 5)
             if span > 0:
                 draw.arc([rx1, ry1, rx2, ry2], start=-90, end=-90 + span, fill=(*accent_rgb, 252), width=thick)
-            draw.text(((rx1 + rx2) / 2, (ry1 + ry2) / 2), pct_label, fill=(248, 250, 252, 255), font=self._get_styled_font(max(12, int(15 * s)), bold_default=True), anchor="mm")
 
-            # Right column: clean telemetry WITHOUT repeating the percentage!
-            tx = rx2 + int(14 * s)
-            draw.text((tx, pad + int(3 * s)), "BATERÍA", fill=(*accent_rgb, 245) if style == "neon" else (148, 163, 184, 235), font=f_title)
+            inner_ring_w = max(20, ring_d - thick * 2 - 8)
+            f_pct, p_txt = self._fit_text(draw, pct_label, max(12, int(15 * s)), inner_ring_w, max_h=inner_ring_w, bold_default=True)
+            draw.text(((rx1 + rx2) / 2.0, (ry1 + ry2) / 2.0), p_txt, fill=(248, 250, 252, 255), font=f_pct, anchor="mm")
+            self._pct_hit_rect = (rx1, ry1, rx2, ry2)
+
+            # Right column: clean auto-fitted telemetry (never clips past right card edge or overlaps vertically!)
+            tx = rx2 + max(8, int(12 * s))
+            max_tx_w = max(28, w - pad - tx)
+            title_max_w = max(24, (w - pad - btn_s - 6) - tx)
+
+            content_top = pad
+            content_bot = h - pad
+            avail_h = max(36, content_bot - content_top)
+
+            # 1) Title row ("BATERÍA")
+            title_h_cap = max(10, int(avail_h * 0.24))
+            f_t, t_txt = self._fit_text(draw, "BATERÍA", max(9, int(10 * s)), title_max_w, max_h=title_h_cap, bold_default=True)
+            t_bb = draw.textbbox((0, 0), t_txt, font=f_t)
+            t_h = max(10, t_bb[3] - t_bb[1])
+            title_y = content_top
+            draw.text((tx, title_y), t_txt, fill=(*accent_rgb, 245) if style == "neon" else (148, 163, 184, 235), font=f_t)
+
+            # 2) Compact status pill badge pinned cleanly at bottom of right column
+            badge_h_cap = max(10, int(avail_h * 0.24))
+            f_b, b_txt = self._fit_text(draw, mode_badge, max(8, int(9 * s)), max(24, max_tx_w - int(12 * s)), max_h=badge_h_cap, bold_default=True)
+            b_bb = draw.textbbox((0, 0), b_txt, font=f_b)
+            b_h = max(9, b_bb[3] - b_bb[1])
+            pb_h = max(16, min(int(avail_h * 0.34), b_h + max(6, int(8 * s))))
+            pb_y2 = content_bot
+            pb_y1 = pb_y2 - pb_h
+            pb_w = min(max_tx_w, int(draw.textlength(b_txt, font=f_b)) + max(12, int(14 * s)))
+            alpha_rounded_rect(composite, [tx, pb_y1, tx + pb_w, pb_y2], radius=min(pb_h // 2, max(6, int(8 * s))), fill=(*accent_rgb, 55), outline=(*accent_rgb, 180), width=1)
+            draw.text((tx + pb_w / 2.0, (pb_y1 + pb_y2) / 2.0), b_txt, fill=(241, 245, 249, 250), font=f_b, anchor="mm")
+
+            # 3) Status text centered in the vertical band strictly between title and badge
             if show_sub:
-                draw.text((tx, pad + int(22 * s)), st_label, fill=(248, 250, 252, 250), font=self._get_styled_font(max(11, int(13 * s)), bold_default=True))
-            # Compact status pill badge below status text
-            pb_w = int(draw.textlength(mode_badge, font=f_badge)) + int(14 * s)
-            pb_y1 = h - pad - int(20 * s)
-            pb_y2 = h - pad - int(2 * s)
-            alpha_rounded_rect(composite, [tx, pb_y1, min(w - pad, tx + pb_w), pb_y2], radius=int(8 * s), fill=(*accent_rgb, 55), outline=(*accent_rgb, 180), width=1)
-            draw.text((tx + min(w - pad - tx, pb_w) / 2.0, (pb_y1 + pb_y2) / 2.0), mode_badge, fill=(241, 245, 249, 250), font=f_badge, anchor="mm")
+                mid_top = title_y + t_h + 2
+                mid_bot = pb_y1 - 2
+                mid_h = max(10, mid_bot - mid_top)
+                f_st, st_txt = self._fit_text(draw, st_label, max(10, int(13 * s)), max_tx_w, max_h=mid_h, bold_default=True)
+                draw.text((tx, (mid_top + mid_bot) / 2.0), st_txt, fill=(248, 250, 252, 250), font=f_st, anchor="lm")
 
         if charging:
             bx = w - pad - btn_s - int(14 * s)
@@ -3617,7 +3775,7 @@ class BatteryWidget(BaseDesktopWidget):
             sec_st.add_command(st_lbl, lambda k=st_id: self._set_style(k), checked=(cur_st == st_id))
         sec_st.add_separator()
         sec_st.add_command("Color de acento...", self._pick_accent)
-        sec_st.add_command("Configuración de Energía Windows...", lambda: os.startfile("ms-settings:batterysaver"))
+        sec_st.add_command("Configuración de Energía Windows...", self._open_power_settings)
         menu.add_separator()
         self._append_common_menu_items(menu)
         menu.show(event.x_root, event.y_root)

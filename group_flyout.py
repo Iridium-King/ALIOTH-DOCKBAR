@@ -2,6 +2,7 @@ import os
 import math
 import subprocess
 import time
+import uuid
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
@@ -755,7 +756,8 @@ class GroupFlyout:
         self.active_menu = menu
         if clicked_child:
             name = clicked_child.get("name", "Elemento")
-            if self.get_item_windows_fn:
+            is_action = (clicked_child.get("type") == "action")
+            if not is_action and self.get_item_windows_fn:
                 try:
                     wins, can_kill = self.get_item_windows_fn(clicked_child)
                 except Exception:
@@ -766,16 +768,20 @@ class GroupFlyout:
                     menu.add_command(c_lbl, lambda c=clicked_child: self._close_child_windows(c), danger=not can_kill)
                     if can_kill:
                         menu.add_command("Finalizar tarea", lambda c=clicked_child: self._kill_child_process(c), danger=True)
-            menu.add_command(f"Abrir {name}", lambda: self._launch_and_close(clicked_child))
+            primary_lbl = f"Ejecutar {name}" if is_action else f"Abrir {name}"
+            menu.add_command(primary_lbl, lambda: self._launch_and_close(clicked_child))
 
             sec_el = menu.add_section("Editar elemento", expanded=False)
             sec_el.add_command("Cambiar icono...", lambda c=clicked_child: self._pick_child_icon(c))
-            sec_el.add_command("Restaurar icono original", lambda c=clicked_child: self._restore_child_icon(c))
+            if (not is_action) or clicked_child.get("icon_path"):
+                sec_el.add_command("Restaurar icono original", lambda c=clicked_child: self._restore_child_icon(c))
             sec_el.add_command("Cambiar nombre...", lambda c=clicked_child: self._rename_child(c))
+            if not is_action:
+                sec_el.add_separator()
+                sec_el.add_command("Ejecutar como administrador", lambda: self._launch_as_admin(clicked_child))
+                sec_el.add_command("Abrir ubicación del archivo", lambda: self._open_location(clicked_child))
             sec_el.add_separator()
-            sec_el.add_command("Ejecutar como administrador", lambda: self._launch_as_admin(clicked_child))
-            sec_el.add_command("Abrir ubicación del archivo", lambda: self._open_location(clicked_child))
-            sec_el.add_separator()
+            sec_el.add_command("Sacar a la Dockbar", lambda c=clicked_child: self._extract_from_group(c))
             sec_el.add_command("Quitar de esta carpeta", lambda c=clicked_child: self._remove_from_group(c), danger=True)
             menu.add_separator()
 
@@ -786,6 +792,33 @@ class GroupFlyout:
             sec_folder.add_command("Restaurar icono original de la carpeta", self._restore_group_icon)
         sec_folder.add_command("Cambiar nombre de la carpeta...", self._rename_group)
         sec_folder.add_command("Desagrupar todos los elementos", self._unpack_group)
+
+        sec_win = menu.add_section("Añadir acción de Windows", expanded=False)
+        win_actions = [
+            ("show_desktop", "Mostrar Escritorio", "Mostrar Escritorio", False),
+            ("display_settings", "Configuración de Pantalla", "Pantalla", False),
+            ("control_panel", "Panel de Control", "Panel de Control", False),
+            ("settings", "Configuración de Windows", "Configuración", False),
+            ("apps_features", "Desinstalar Aplicaciones", "Desinstalar Apps", False),
+            ("sound_settings", "Sonido y Volumen", "Sonido", False),
+            ("network_settings", "Red e Internet", "Red", False),
+            ("bluetooth_settings", "Bluetooth y Dispositivos", "Bluetooth", False),
+            ("taskmgr", "Administrador de Tareas", "Admin. Tareas", False),
+            ("recycle_bin", "Papelera de Reciclaje", "Papelera", False),
+            ("snipping_tool", "Recortes", "Recortes", False),
+            None,
+            ("lock_pc", "Bloquear Equipo", "Bloquear Equipo", False),
+            ("logoff_pc", "Cerrar Sesión", "Cerrar Sesión", False),
+            ("restart_pc", "Reiniciar Equipo", "Reiniciar", False),
+            ("shutdown_pc", "Apagar Equipo", "Apagar", True),
+        ]
+        for entry in win_actions:
+            if entry is None:
+                sec_win.add_separator()
+            else:
+                a_type, a_lbl, a_name, a_danger = entry
+                sec_win.add_command(a_lbl, lambda t=a_type, n=a_name: self._add_action_to_group(t, n), danger=a_danger)
+
         menu.add_separator()
         menu.add_command("Cerrar", self.close)
 
@@ -894,6 +927,28 @@ class GroupFlyout:
             if self.on_group_modified:
                 self.on_group_modified()
             self._render()
+
+    def _extract_from_group(self, child):
+        child_id = child.get("id")
+        self.close()
+        if self.on_group_modified and child_id:
+            self.on_group_modified("extract", self.group_item.get("id"), child_id)
+
+    def _add_action_to_group(self, action_type, name):
+        new_child = {
+            "id": str(uuid.uuid4()),
+            "type": "action",
+            "name": name,
+            "action_type": action_type,
+        }
+        items = self._get_items_list()
+        items.append(new_child)
+        self._load_icons()
+        self._calculate_dimensions()
+        self._apply_geometry()
+        if self.on_group_modified:
+            self.on_group_modified()
+        self._render()
 
     def _remove_from_group(self, child):
         items = self._get_items_list()
