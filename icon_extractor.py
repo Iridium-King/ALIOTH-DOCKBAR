@@ -152,36 +152,37 @@ def hicon_to_pil(hicon, size=128):
         return None
 
 def extract_shell_image_factory(parsing_name, size=128):
-    """Extracts crisp native high-res icons for files, folders, PWAs, and UWP apps via IShellItemImageFactory."""
     if not parsing_name:
         return None
+    initialized = False
+    factory = ctypes.c_void_p()
+    bitmap = wintypes.HBITMAP()
+    release = None
     try:
         try:
-            ole32.CoInitialize(None)
-        except Exception:
+            initialized = ole32.CoInitialize(None) in (0, 1)
+        except OSError:
             pass
-        p_factory = ctypes.c_void_p()
-        hr = shell32.SHCreateItemFromParsingName(
-            str(parsing_name), None, ctypes.byref(IID_IShellItemImageFactory), ctypes.byref(p_factory)
-        )
-        if hr != 0 or not p_factory.value:
+        hr = shell32.SHCreateItemFromParsingName(str(parsing_name), None, ctypes.byref(IID_IShellItemImageFactory), ctypes.byref(factory))
+        if hr != 0 or not factory.value:
             return None
-        vtable = ctypes.cast(p_factory.value, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
-        GetImage = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, SIZE, ctypes.c_int, ctypes.POINTER(wintypes.HBITMAP))(vtable[3])
-        Release = ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtable[2])
-        hbm = wintypes.HBITMAP()
-        # 0x00 = SIIGBF_RESIZETOFIT (includes thumbnails/badges cleanly, or icon at crisp high-DPI size)
-        hr2 = GetImage(p_factory.value, SIZE(size, size), 0x00, ctypes.byref(hbm))
-        Release(p_factory.value)
-        if hr2 != 0 or not hbm.value:
+        table = ctypes.cast(factory.value, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        get_image = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, SIZE, ctypes.c_int, ctypes.POINTER(wintypes.HBITMAP))(table[3])
+        release = ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(table[2])
+        if get_image(factory.value, SIZE(size, size), 0, ctypes.byref(bitmap)) != 0 or not bitmap.value:
             return None
-        img = _hbitmap_to_pil(hbm)
-        gdi32.DeleteObject(hbm)
-        if img and img.size != (size, size):
-            img = img.resize((size, size), Image.Resampling.LANCZOS)
-        return img
+        image = _hbitmap_to_pil(bitmap)
+        return image.resize((size, size), Image.Resampling.LANCZOS) if image and image.size != (size, size) else image
     except Exception:
         return None
+    finally:
+        if bitmap.value:
+            gdi32.DeleteObject(bitmap)
+        if release:
+            release(factory.value)
+        if initialized:
+            ole32.CoUninitialize()
+
 
 def extract_hicon_from_file(file_path, icon_index=0, size=128):
     """Extracts HICON of requested size using PrivateExtractIconsW."""
@@ -888,9 +889,9 @@ def get_or_create_icon(item, size=128):
     if icon_path and os.path.exists(icon_path):
         try:
             with Image.open(icon_path) as raw_im:
-                img = raw_im.convert('RGBA')
-            if img.size != (size, size):
-                img = img.resize((size, size), Image.Resampling.LANCZOS)
+                if raw_im.mode in ("P", "1"):
+                    raw_im = raw_im.convert("RGBA")
+                img = raw_im.resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
             return img
         except Exception:
             pass
@@ -921,8 +922,10 @@ def get_or_create_icon(item, size=128):
         if res.get("icon_path") and os.path.exists(res["icon_path"]):
             item["icon_path"] = res["icon_path"]
             try:
-                img = Image.open(res["icon_path"]).convert('RGBA')
-                return img.resize((size, size), Image.Resampling.LANCZOS)
+                with Image.open(res["icon_path"]) as raw_im:
+                    if raw_im.mode in ("P", "1"):
+                        raw_im = raw_im.convert("RGBA")
+                    return raw_im.resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
             except Exception:
                 pass
 

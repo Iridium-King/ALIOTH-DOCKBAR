@@ -4,8 +4,10 @@ import time
 import json
 import uuid
 import copy
+from functools import wraps
 import winreg
 import ctypes
+from local_state import InterProcessLock as _ConfigFileMutex, merge_changes
 
 DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 STARTUP_LINK_NAME = "AliothDockbar.lnk"
@@ -19,7 +21,8 @@ DEFAULT_CONFIG = {
         "edge_trigger_thickness": 4,         # Pixels near edge to activate
         "start_with_windows": False,         # Startup shortcut
         "locked": False,                     # Lock icons from dragging/removing
-        "show_open_windows": False,          # Show unpinned open apps on the right side of the dock
+        "show_open_windows": False,          # Show unpinned open apps on the dock
+        "open_windows_position": "right",    # "left", "center", "right"
         "launcher_mode": "custom",           # "custom" (macOS-style app drawer) or "windows" (Win Key)
         "media_capsule_enabled": False,      # Centered media player capsule above Dockbar
         "media_capsule_style": "cristal",    # "cristal", "neon", "minimal", "oled", "acrilico", "editorial"
@@ -33,7 +36,11 @@ DEFAULT_CONFIG = {
         "media_capsule_title_color": "#f8fafc",
         "media_capsule_artist_color": "#94a3b8",
         "media_capsule_btn_pos": "right",    # "right", "left", "center", "split"
-        "media_capsule_offset_y": 10         # Gap between Dockbar and capsule (4 to 48 px)
+        "media_capsule_btn_scale": 1.0,      # Playback button size scale (0.65 to 1.60)
+        "media_capsule_btn_style": "clasico", # "clasico", "outline", "vidrio", "cuadrado", "neon", "minimal"
+        "media_capsule_offset_y": 10,        # Gap between Dockbar and capsule (4 to 48 px)
+        "media_capsule_auto_hide_idle": True, # Only show when active media playback exists
+        "media_capsule_keep_audio_on_blur": True # Auto-resume apps that pause on focus loss
     },
     "appearance": {
         "edge_offset": 6,                    # Distance between dock and screen edge (0 to 60px)
@@ -81,11 +88,17 @@ DEFAULT_CONFIG = {
         "indicator_color": "#60a5fa",
         "indicator_size": 6,                 # Base indicator size (3 to 12 px)
         "dock_battery_style": "ring",        # "ring", "bar", "pill", "minimal"
-        "dock_clock_style": "wide_5_3",      # "wide_5_3", "digital", "analog", "neon", "minimal", "pill"
+        "dock_clock_style": "cristal",       # "cristal", "glass_split", "flip", "neon", "minimal", "pill", "led", "analog", "analog_light", "analog_gold", "analog_minimal", "neon_ring"
+        "dock_clock_aspect": "5_3",          # "1_1", "4_3", "5_3", "2_1"
+        "dock_clock_scale": 1.0,             # 0.75 to 1.35
         "dock_clock_24h": True,
         "dock_clock_seconds": False,
         "dock_clock_show_date": True,
-        "dock_clock_color": "#f8fafc"
+        "dock_clock_color": "#f8fafc",
+        "dock_clock_font_family": "Segoe UI",
+        "dock_clock_font_scale": 1.0,        # Independent text size multiplier (0.60 to 1.60)
+        "dock_clock_font_bold": True,
+        "dock_clock_font_italic": False
     },
     "widgets": {
         "clock": {
@@ -95,6 +108,7 @@ DEFAULT_CONFIG = {
             "format_24h": True,
             "show_seconds": False,
             "clock_style": "moderno",
+            "aspect_preset": "auto",
             "time_color": "#ffffff",
             "date_color": "#cbd5e1",
             "alignment": "left",
@@ -172,34 +186,6 @@ DEFAULT_CONFIG = {
     "items": []
 }
 
-class _ConfigFileMutex:
-    """Shared inter-process Win32 Mutex so Dockbar, Widgets, CLI & MCP never clobber config.json."""
-    def __init__(self, name="Local\\AliothTodoStore_Mutex"):
-        self.name = name
-        self.handle = None
-
-    def __enter__(self):
-        try:
-            k32 = ctypes.windll.kernel32
-            h = k32.CreateMutexW(None, False, self.name)
-            if h:
-                k32.WaitForSingleObject(h, 4000)
-                self.handle = h
-        except Exception:
-            self.handle = None
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.handle:
-            try:
-                k32 = ctypes.windll.kernel32
-                k32.ReleaseMutex(self.handle)
-                k32.CloseHandle(self.handle)
-            except Exception:
-                pass
-            self.handle = None
-
-
 def _deep_merge_defaults(target, defaults):
     if not isinstance(target, dict) or not isinstance(defaults, dict):
         return target
@@ -211,32 +197,45 @@ def _deep_merge_defaults(target, defaults):
     return target
 
 
+def _config_write(fn):
+    @wraps(fn)
+    def locked(*args, **kwargs):
+        with _ConfigFileMutex():
+            return fn(*args, **kwargs)
+    return locked
+
+
 class ConfigManager:
     def __init__(self, config_path=DEFAULT_CONFIG_PATH):
         self.config_path = config_path
         self._dirty_sections = set()
         self._dirty_widgets = set()
+        self._baseline = {}
         self.data = self.load()
 
+    @_config_write
     def load(self):
-        if os.path.exists(self.config_path):
-            with _ConfigFileMutex():
+        with _ConfigFileMutex():
+            if os.path.exists(self.config_path):
                 try:
-                    with open(self.config_path, "r", encoding="utf-8") as f:
+                    with open(self.config_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                    if isinstance(data, dict):
-                        _deep_merge_defaults(data, DEFAULT_CONFIG)
-                        return data
-                except Exception as e:
-                    print(f"[ConfigManager] Error reading config: {e}. Using defaults.")
-
-        # Initial creation with default sample items
-        initial = copy.deepcopy(DEFAULT_CONFIG)
-        initial["items"] = self._get_initial_items()
-        self.data = initial
-        self._dirty_sections = set(initial.keys())
-        self.save(initial)
-        return initial
+                    if not isinstance(data, dict):
+                        raise ValueError('La configuración debe ser un objeto JSON.')
+                    _deep_merge_defaults(data, DEFAULT_CONFIG)
+                    latest = copy.deepcopy(data)
+                    if hasattr(self, "data"):
+                        data = merge_changes(self._baseline, self.data, data)
+                    self._baseline = latest
+                    self.data = data
+                    return data
+                except (OSError, ValueError) as exc:
+                    raise ValueError('No se modificó la configuración ilegible: ' + str(exc)) from exc
+            initial = copy.deepcopy(DEFAULT_CONFIG)
+            initial['items'] = self._get_initial_items()
+            self.data = initial
+            self.save(initial)
+            return copy.deepcopy(self.data)
 
     def _get_initial_items(self):
         items = [
@@ -274,39 +273,20 @@ class ConfigManager:
         ]
         return items
 
+    @_config_write
     def save(self, data=None):
         if data is not None:
             self.data = data
         tmp_path = f"{self.config_path}.{os.getpid()}.tmp"
         with _ConfigFileMutex():
             try:
-                # Re-read disk state and merge only sections/widgets modified in this process,
-                # so Dockbar and Widgets processes NEVER overwrite each other's settings or positions!
-                merged = copy.deepcopy(self.data)
+                disk_data = {}
                 if os.path.exists(self.config_path):
-                    try:
-                        with open(self.config_path, "r", encoding="utf-8") as rf:
-                            disk_data = json.load(rf)
-                        if isinstance(disk_data, dict):
-                            dirty_secs = getattr(self, "_dirty_sections", set())
-                            dirty_wids = getattr(self, "_dirty_widgets", set())
-                            if dirty_secs or dirty_wids:
-                                merged = copy.deepcopy(disk_data)
-                                for sec in dirty_secs:
-                                    if sec == "widgets" and dirty_wids:
-                                        continue
-                                    if sec in self.data:
-                                        merged[sec] = copy.deepcopy(self.data[sec])
-                                if dirty_wids:
-                                    w_disk = merged.setdefault("widgets", {})
-                                    w_mem = self.data.get("widgets", {})
-                                    for wid in dirty_wids:
-                                        if wid in w_mem:
-                                            w_disk[wid] = copy.deepcopy(w_mem[wid])
-                                self.data = copy.deepcopy(merged)
-                    except Exception:
-                        pass
-
+                    with open(self.config_path, 'r', encoding='utf-8') as rf:
+                        disk_data = json.load(rf)
+                    if not isinstance(disk_data, dict):
+                        raise ValueError('La configuración debe ser un objeto JSON.')
+                merged = merge_changes(self._baseline, self.data, disk_data)
                 _deep_merge_defaults(merged, DEFAULT_CONFIG)
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(merged, f, indent=4, ensure_ascii=False)
@@ -322,6 +302,8 @@ class ConfigManager:
                         time.sleep(0.08 * (attempt + 1))
                 if last_err is not None:
                     raise last_err
+                self.data = copy.deepcopy(merged)
+                self._baseline = copy.deepcopy(merged)
                 self._dirty_sections.clear()
                 self._dirty_widgets.clear()
             except Exception as e:
@@ -331,6 +313,7 @@ class ConfigManager:
                         os.remove(tmp_path)
                 except Exception:
                     pass
+                raise
 
     def mark_dirty(self, section, widget_id=None):
         """Marks a config section or specific widget dirty so save() persists it cleanly."""
@@ -342,6 +325,7 @@ class ConfigManager:
     def get(self, section, key, default=None):
         return self.data.get(section, {}).get(key, default)
 
+    @_config_write
     def set(self, section, key, value):
         if section not in self.data:
             self.data[section] = {}
@@ -353,22 +337,24 @@ class ConfigManager:
         return self.data.get("widgets", {}).get(name, {}).get(key, default)
 
     def set_widget(self, name, key, value):
-        if "widgets" not in self.data:
-            self.data["widgets"] = {}
-        if name not in self.data["widgets"]:
-            self.data["widgets"][name] = {}
-        self.data["widgets"][name][key] = value
+        self.update_widget(name, {key: value})
+
+    @_config_write
+    def update_widget(self, name, settings):
+        self.data.setdefault('widgets', {}).setdefault(name, {}).update(settings)
         self._dirty_widgets.add(name)
         self.save()
 
     def get_items(self):
         return list(self.data.get("items", []))
 
+    @_config_write
     def set_items(self, items):
         self.data["items"] = items
         self._dirty_sections.add("items")
         self.save()
 
+    @_config_write
     def add_item(self, item_dict, index=None):
         items = self.get_items()
         if "id" not in item_dict:
@@ -379,6 +365,7 @@ class ConfigManager:
             items.append(item_dict)
         self.set_items(items)
 
+    @_config_write
     def remove_item(self, item_id):
         items = self.get_items()
         if isinstance(item_id, int):
@@ -388,6 +375,7 @@ class ConfigManager:
             items = [it for it in items if it.get("id") != item_id]
         self.set_items(items)
 
+    @_config_write
     def update_item(self, item_id, new_data):
         items = self.get_items()
         for i, it in enumerate(items):
@@ -396,6 +384,7 @@ class ConfigManager:
                 break
         self.set_items(items)
 
+    @_config_write
     def move_item(self, from_idx, to_idx):
         items = self.get_items()
         if 0 <= from_idx < len(items) and 0 <= to_idx < len(items):
@@ -412,6 +401,7 @@ class ConfigManager:
             return "Acciones de Windows"
         return f"Grupo ({fallback_target_name})"
 
+    @_config_write
     def create_group(self, name="Nueva Carpeta", items_list=None, index=None):
         """Creates a new group/folder item on the dock and returns its id."""
         children = []
@@ -430,6 +420,7 @@ class ConfigManager:
         self.add_item(new_group, index=index)
         return new_group["id"]
 
+    @_config_write
     def add_child_to_group(self, group_id, child_dict):
         """Appends a new app or system action child into an existing group."""
         items = self.get_items()
@@ -444,6 +435,7 @@ class ConfigManager:
                 return child["id"]
         return None
 
+    @_config_write
     def move_item_to_group(self, source_ref, target_group_id):
         """Moves a top-level dock item (by index or id) into an existing group."""
         items = self.get_items()
@@ -465,6 +457,7 @@ class ConfigManager:
             return None
         return self.merge_into_group(src_idx, tgt_idx)
 
+    @_config_write
     def extract_from_group(self, group_id, child_ref):
         """Moves a single child item (by index or id) out of a group back to the main dock."""
         items = self.get_items()
@@ -493,6 +486,7 @@ class ConfigManager:
                 return extracted["id"]
         return None
 
+    @_config_write
     def merge_into_group(self, source_idx, target_idx, group_name="Nuevo Grupo"):
         """Merges two dock items (apps, system actions, or groups) into a group folder."""
         items = self.get_items()
@@ -550,6 +544,7 @@ class ConfigManager:
         self.set_items(items)
         return result_id
 
+    @_config_write
     def ungroup(self, group_id):
         """Unpacks all items from a group back to the main dock."""
         items = self.get_items()
@@ -582,21 +577,6 @@ class ConfigManager:
         return cur_pyw if os.path.exists(cur_pyw) else "pyw.exe"
 
     @staticmethod
-    def _ensure_startup_approved(subkey_name, entry_name):
-        """Ensures Windows Task Manager StartupApproved does not have the entry disabled."""
-        path = rf"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\{subkey_name}"
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
-                try:
-                    val, reg_type = winreg.QueryValueEx(key, entry_name)
-                    if isinstance(val, (bytes, bytearray)) and len(val) >= 1 and val[0] != 2:
-                        winreg.SetValueEx(key, entry_name, 0, reg_type, b"\x02" + b"\x00" * 11)
-                except FileNotFoundError:
-                    pass
-        except Exception:
-            pass
-
-    @staticmethod
     def _configure_user_logon_task(enable, pythonw="", pyw_path="", local_dir=""):
         """Best-effort per-user Task Scheduler logon trigger via COM (no admin required)."""
         try:
@@ -612,6 +592,16 @@ class ConfigManager:
                     pass
                 return True
 
+            try:
+                existing = root_folder.GetTask(task_name)
+            except Exception:
+                existing = None
+            if existing is not None:
+                if not existing.Enabled:
+                    raise RuntimeError('El inicio está deshabilitado en Windows; se respeta esa decisión.')
+                action = existing.Definition.Actions.Item(1)
+                if action.Path.lower() == pythonw.lower() and action.Arguments == f'"{pyw_path}"':
+                    return True
             task_def = service.NewTask(0)
             reg_info = task_def.RegistrationInfo
             reg_info.Description = "Alioth Dockbar autostart launcher"
@@ -652,7 +642,7 @@ class ConfigManager:
             print(f"[Startup] Scheduled task registration skipped: {e}")
             return False
 
-    # Windows Startup Management (Without Admin, signed pythonw.exe local bootstrapper + Run key + Startup folder + Logon task)
+    # Windows Startup: one per-user logon task, with a local OneDrive readiness check.
     def update_startup_shortcut(self, enable=None):
         if enable is None:
             enable = self.get("general", "start_with_windows", False)
@@ -832,28 +822,15 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[Startup] Error creating local bootstrapper: {e}")
 
+            if not self._configure_user_logon_task(True, pythonw=pythonw, pyw_path=pyw_path, local_dir=local_dir):
+                raise RuntimeError('No se verificó la tarea de inicio; se conservaron los mecanismos existentes.')
             try:
-                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, run_key_path) as key:
-                    winreg.SetValueEx(key, run_val_name, 0, winreg.REG_SZ, f'"{pythonw}" "{pyw_path}"')
-                self._ensure_startup_approved("Run", run_val_name)
-            except Exception as e:
-                print(f"[Startup] Error updating HKCU Run key: {e}")
-
-            try:
-                import win32com.client
-                shell = win32com.client.Dispatch("WScript.Shell")
-                shortcut = shell.CreateShortcut(shortcut_path)
-                shortcut.TargetPath = pythonw
-                shortcut.Arguments = f'"{pyw_path}"'
-                shortcut.WorkingDirectory = local_dir
-                shortcut.Description = "Alioth Dockbar"
-                shortcut.Save()
-                self._ensure_startup_approved("StartupFolder", STARTUP_LINK_NAME)
-                print(f"[Startup] Autostart configured via Run + {shortcut_path}")
-            except Exception as e:
-                print(f"[Startup] Error creating shortcut: {e}")
-
-            self._configure_user_logon_task(True, pythonw=pythonw, pyw_path=pyw_path, local_dir=local_dir)
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key_path, 0, winreg.KEY_SET_VALUE) as key:
+                    winreg.DeleteValue(key, run_val_name)
+            except FileNotFoundError:
+                pass
+            if os.path.exists(shortcut_path):
+                os.remove(shortcut_path)
         else:
             try:
                 with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key_path, 0, winreg.KEY_SET_VALUE) as key:

@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, colorchooser, filedialog, simpledialog
 from PIL import Image, ImageTk
 
 import icon_extractor
+from window_utils import animate_window, enable_native_motion
 
 user32 = ctypes.windll.user32
 dwmapi = ctypes.windll.dwmapi
@@ -68,6 +69,7 @@ class SettingsWindow:
         self._build_items_tab()
         self._build_widgets_tab()
         self._build_footer()
+        enable_native_motion(self.root)
 
     def _apply_win11_dark_and_rounded(self):
         try:
@@ -832,7 +834,7 @@ class SettingsWindow:
             self.config_mgr.save()
         except Exception:
             pass
-        self.root.destroy()
+        animate_window(self.root, showing=False, on_done=self.root.destroy)
 
     def _build_footer(self):
         footer = ttk.Frame(self.root, style="Dark.TFrame")
@@ -843,18 +845,5 @@ class SettingsWindow:
         ttk.Label(footer, text="✨ Los cambios se aplican automáticamente en tiempo real.", style="Muted.TLabel").pack(side=tk.LEFT, padx=4)
 
     def _open_web_settings(self):
-        html_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.html")
-        if os.path.exists(html_path):
-            import subprocess
-            try:
-                # Launch in Edge app mode for a sleek borderless web window
-                edge_path = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-                if not os.path.exists(edge_path):
-                    edge_path = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
-                if os.path.exists(edge_path):
-                    subprocess.Popen([edge_path, f"--app=file:///{html_path}"])
-                else:
-                    os.startfile(html_path)
-            except Exception as e:
-                print(f"[Settings] Error opening HTML settings: {e}")
-                os.startfile(html_path)
+        import settings_server
+        settings_server.open_settings_ui(self.config_mgr, on_applied=self.on_applied, tk_root=self.root)

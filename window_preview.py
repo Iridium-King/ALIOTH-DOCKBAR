@@ -5,7 +5,7 @@ from ctypes import wintypes
 import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from window_utils import set_tool_window, alpha_rounded_rect, alpha_line
+from window_utils import animate_window, cancel_window_animation, set_tool_window, alpha_rounded_rect, alpha_line
 
 user32 = ctypes.windll.user32
 dwmapi = ctypes.windll.dwmapi
@@ -266,6 +266,7 @@ class WindowPreviewFlyout:
 
         self._register_thumbnails()
         self._render()
+        animate_window(self.window)
         self._poll_escape()
 
     def _poll_escape(self):
@@ -569,7 +570,26 @@ class WindowPreviewFlyout:
             self._register_thumbnails()
             self._render()
 
-    def close(self):
+    def close(self, animate=True):
+        if getattr(self, '_closing', False):
+            if not animate:
+                self._finish_close()
+            return
+        self._closing = True
+        callback, self.on_close = self.on_close, None
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass
+        if animate and self.window and self.window.winfo_exists():
+            animate_window(self.window, showing=False, on_done=self._finish_close)
+        else:
+            self._finish_close()
+
+    def _finish_close(self):
+        if self.window:
+            cancel_window_animation(self.window)
         if self._esc_job:
             try:
                 self.parent.after_cancel(self._esc_job)
@@ -595,6 +615,8 @@ class WindowPreviewFlyout:
             self.window = None
 
         self.photo_ref = None
+        self.canvas = None
+        self._font_cache.clear()
         self._bg_img = None
         self.app_icon_pil = None
         self.card_boxes.clear()

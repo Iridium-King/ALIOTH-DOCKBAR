@@ -8,6 +8,9 @@ import hashlib
 import atexit
 import ctypes
 import threading
+import secrets
+import socket
+from http.cookies import SimpleCookie
 import subprocess
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
@@ -19,8 +22,13 @@ SERVER_HOST = "127.0.0.1"
 PANEL_WINDOW_TITLE = "Configuración - Alioth Dockbar"
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
-    allow_reuse_address = True
+    allow_reuse_address = False
     daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 _server_instance = None
 _server_thread = None
@@ -39,52 +47,8 @@ _panel_clients = []  # list of (token, start_epoch, threading.Event)
 _server_shutting_down = False
 _last_panel_open_ts = 0.0
 _dock_status_fn = None
-
-
-def _close_native_panel_windows():
-    """Sends WM_CLOSE to existing Edge/Chrome --app= windows belonging to Alioth Dockbar."""
-    closed_count = 0
-    try:
-        user32 = ctypes.windll.user32
-        WM_CLOSE = 0x0010
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-        targets = []
-
-        def _enum_cb(hwnd, lparam):
-            try:
-                if not user32.IsWindowVisible(hwnd):
-                    return True
-                title_buf = ctypes.create_unicode_buffer(256)
-                user32.GetWindowTextW(hwnd, title_buf, 256)
-                title = title_buf.value.strip()
-                if not title:
-                    return True
-                # Only target dedicated app-mode windows titled "Configuración - Alioth Dockbar"
-                # (never touch regular multi-tab browser windows whose titles end with "- Microsoft Edge" / "- Google Chrome")
-                if title == PANEL_WINDOW_TITLE or (
-                    title.startswith(PANEL_WINDOW_TITLE)
-                    and "Microsoft" not in title
-                    and "Chrome" not in title
-                    and "Edge" not in title
-                ):
-                    cls_buf = ctypes.create_unicode_buffer(128)
-                    user32.GetClassNameW(hwnd, cls_buf, 128)
-                    if cls_buf.value.startswith("Chrome_WidgetWin"):
-                        targets.append(hwnd)
-            except Exception:
-                pass
-            return True
-
-        user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
-        for hwnd in targets:
-            try:
-                user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
-                closed_count += 1
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return closed_count
+_api_token = secrets.token_urlsafe(32)
+_mutation_lock = threading.RLock()
 
 
 def has_active_panel():
@@ -103,14 +67,17 @@ def close_settings_ui(next_token=None, force=True, reason="unspecified"):
             if just_opened and not has_connected:
                 return 0
     with _panel_lock:
+        had_panel = bool(_active_panel_token or _panel_clients)
+        if next_token is None and not had_panel:
+            return 0
         _panel_close_epoch += 1
         _active_panel_token = next_token
         clients = list(_panel_clients)
     for tok, _ep, ev in clients:
         if next_token is None or tok != next_token:
             ev.set()
-    closed = _close_native_panel_windows()
-    if next_token is None:
+    closed = 0
+    if next_token is None and had_panel:
         app_search_mod = sys.modules.get("app_search")
         if app_search_mod is not None and hasattr(app_search_mod, "clear_caches"):
             try:
@@ -138,7 +105,7 @@ def stop_server():
             pass
 
 
-atexit.register(close_settings_ui)
+atexit.register(lambda: close_settings_ui(reason="process_exit") if _server_instance is not None else None)
 
 def _run_on_tk(fn, timeout=180):
     """Executes a Tkinter UI function safely on the mainloop thread via lock-free queue."""
@@ -185,7 +152,8 @@ def _open_native_file_dialog(title="Seleccionar Archivo", filetypes=None):
 
 class SettingsApiHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass
+        if len(args) > 1 and str(args[1]).startswith("5"):
+            print(f"[Settings HTTP] {self.command} {urllib.parse.urlparse(self.path).path}: {args[1]}")
 
     def _send_json(self, data, status=200):
         try:
@@ -194,9 +162,6 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.end_headers()
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
@@ -216,23 +181,68 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
 
+    def _allowed(self, authenticate=True):
+        expected = f'{SERVER_HOST}:{self.server.server_port}'
+        if self.headers.get('Host') != expected or self.headers.get('Origin', 'http://' + expected) != 'http://' + expected:
+            self._send_json({'error': 'Origen no permitido'}, 403)
+            return False
+        if authenticate:
+            cookie = SimpleCookie()
+            try:
+                cookie.load(self.headers.get('Cookie', ''))
+                value = cookie['alioth_session'].value if 'alioth_session' in cookie else ''
+            except Exception:
+                value = ''
+            bearer = self.headers.get('X-Alioth-Token', '')
+            if not secrets.compare_digest(value, _api_token) and not secrets.compare_digest(bearer, _api_token):
+                self._send_json({'error': 'Sesión requerida'}, 401)
+                return False
+        return True
+
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.end_headers()
+        if self._allowed(False):
+            self.send_response(204)
+            self.end_headers()
+
+    def do_POST(self):
+        if not self._allowed(False):
+            return
+        if urllib.parse.urlparse(self.path).path == '/api/session':
+            if not secrets.compare_digest(self.headers.get('X-Alioth-Token', ''), _api_token):
+                self._send_json({'error': 'Sesión inválida'}, 401)
+                return
+            self.send_response(204)
+            self.send_header('Set-Cookie', f'alioth_session={_api_token}; HttpOnly; SameSite=Strict; Path=/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        if not self._allowed():
+            return
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 <= length <= 2 * 1024 * 1024:
+                self._send_json({'error': 'Solicitud demasiado grande'}, 413)
+                return
+            with _mutation_lock:
+                self._handle_post()
+        except (ValueError, TypeError, KeyError) as exc:
+            self._send_json({'error': str(exc)}, 400)
+        except Exception as exc:
+            self._send_json({'error': str(exc)}, 500)
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         qs = urllib.parse.parse_qs(parsed.query)
         base_dir = os.path.dirname(os.path.abspath(__file__))
+        internal = path in ('/api/ping', '/api/reveal', '/api/open_settings') and not self.headers.get('Origin')
+        if not self._allowed(authenticate=path.startswith('/api/') and not internal):
+            return
 
         if path == "/api/config":
             if _config_mgr_ref:
                 try:
-                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    _config_mgr_ref.load()
                 except Exception:
                     pass
                 self._send_json(_config_mgr_ref.data)
@@ -292,7 +302,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 start_ep = _panel_close_epoch
                 cur_tok = _active_panel_token
                 # If this panel was already superseded/closed before connecting, close immediately!
-                immediate_close = _server_shutting_down or (bool(token) and cur_tok != token)
+                immediate_close = _server_shutting_down or (bool(token) and bool(cur_tok) and cur_tok != token)
                 client_entry = (token, start_ep, ev)
                 if not immediate_close:
                     _panel_clients.append(client_entry)
@@ -301,7 +311,6 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
                 self.send_header("Connection", "close")
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 if immediate_close:
                     self.wfile.write(b"event: close\ndata: superseded\n\n")
@@ -445,10 +454,10 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             file_path = os.path.join(base_dir, "settings.html")
             content_type = "text/html; charset=utf-8"
         else:
-            rel_path = path.lstrip("/").replace("/", os.sep)
-            file_path = os.path.abspath(os.path.join(base_dir, rel_path))
-            if not file_path.startswith(os.path.abspath(base_dir)):
-                self.send_error(403, "Forbidden")
+            assets = os.path.realpath(os.path.join(base_dir, 'assets'))
+            file_path = os.path.realpath(os.path.join(base_dir, path.lstrip('/').replace('/', os.sep)))
+            if not path.startswith('/assets/') or os.path.commonpath([assets, file_path]) != assets or os.path.splitext(file_path)[1].lower() not in ('.png', '.jpg', '.jpeg', '.svg', '.ico', '.css', '.js'):
+                self.send_error(403, 'Forbidden')
                 return
             low = file_path.lower()
             if low.endswith(".css"):
@@ -477,7 +486,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "File Not Found")
 
-    def do_POST(self):
+    def _handle_post(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -486,8 +495,10 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
 
         try:
             payload = json.loads(body.decode("utf-8")) if body else {}
-        except Exception:
-            payload = {}
+        except Exception as exc:
+            raise ValueError("JSON inválido") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("La solicitud debe ser un objeto JSON")
 
         if path == "/api/config":
             if _config_mgr_ref:
@@ -538,11 +549,10 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             settings = payload.get("settings", {})
             if _config_mgr_ref and w_id:
                 try:
-                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    _config_mgr_ref.load()
                 except Exception:
                     pass
-                for k, v in settings.items():
-                    _config_mgr_ref.set_widget(w_id, k, v)
+                _config_mgr_ref.update_widget(w_id, settings)
                 if _on_applied_ref:
                     _on_applied_ref()
                 self._send_json({"status": "ok"})
@@ -557,7 +567,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             def_h = int(payload.get("def_h", 120) or 120)
             if _config_mgr_ref and w_id and preset:
                 try:
-                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    _config_mgr_ref.load()
                     user32_s = ctypes.windll.user32
                     sw = int(user32_s.GetSystemMetrics(0) or 1920)
                     sh = int(user32_s.GetSystemMetrics(1) or 1080)
@@ -1030,7 +1040,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                     deduplicate=payload.get("deduplicate", True),
                 )
                 if _config_mgr_ref:
-                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    _config_mgr_ref.load()
                 if _on_applied_ref:
                     _on_applied_ref()
                 self._send_json(res)
@@ -1043,7 +1053,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 import todo_store
                 res = todo_store.ingest_todo_inbox()
                 if _config_mgr_ref:
-                    _config_mgr_ref.data = _config_mgr_ref.load()
+                    _config_mgr_ref.load()
                 if _on_applied_ref:
                     _on_applied_ref()
                 self._send_json(res)
@@ -1134,8 +1144,9 @@ def start_server(config_mgr, on_applied=None, tk_root=None, on_reveal=None, on_o
         _server_thread = threading.Thread(target=_server_instance.serve_forever, daemon=True)
         _server_thread.start()
         print(f"[Settings Server] ThreadingHTTPServer running at http://{SERVER_HOST}:{SERVER_PORT}")
-    except Exception as e:
-        print(f"[Settings Server] Could not start server: {e}")
+    except Exception:
+        _server_instance = None
+        raise
 
 
 def open_settings_ui(config_mgr, on_applied=None, tk_root=None, pick_icon_id=None, child_id=None):
@@ -1156,7 +1167,7 @@ def open_settings_ui(config_mgr, on_applied=None, tk_root=None, pick_icon_id=Non
         params.append(("pick_icon_id", str(pick_icon_id)))
         if child_id:
             params.append(("child_id", str(child_id)))
-    url = f"http://{SERVER_HOST}:{SERVER_PORT}/?" + urllib.parse.urlencode(params)
+    url = f"http://{SERVER_HOST}:{SERVER_PORT}/?" + urllib.parse.urlencode(params) + "#session=" + _api_token
     edge_paths = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -1179,6 +1190,7 @@ def open_settings_ui(config_mgr, on_applied=None, tk_root=None, pick_icon_id=Non
             try:
                 cmd = [
                     browser_path,
+                    "--new-window",
                     f"--app={url}",
                     f"--window-size={win_w},{win_h}",
                 ]

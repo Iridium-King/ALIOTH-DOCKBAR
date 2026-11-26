@@ -1,4 +1,5 @@
 import os
+from collections import OrderedDict
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
@@ -220,8 +221,14 @@ def update_layered_pil(top_hwnd, x, y, pil_rgba):
                 _, _, hdc_mem, _, _, bits = entry
 
             # Fast native C premultiplication & RGBA->BGRa swizzle directly in Pillow (zero NumPy overhead)
-            premul_bgra = pil_rgba.convert("RGBa").tobytes("raw", "BGRa")
-            ctypes.memmove(bits, premul_bgra, w * h * 4)
+            if w * h > 262144:
+                for top in range(0, h, 64):
+                    block = pil_rgba.crop((0, top, w, min(h, top + 64)))
+                    data = block.convert('RGBa').tobytes('raw', 'BGRa')
+                    ctypes.memmove(bits.value + top * w * 4, data, len(data))
+            else:
+                data = pil_rgba.convert('RGBa').tobytes('raw', 'BGRa')
+                ctypes.memmove(bits, data, w * h * 4)
 
             pt_dst = wintypes.POINT(int(x), int(y))
             sz = wintypes.SIZE(int(w), int(h))
@@ -234,12 +241,80 @@ def update_layered_pil(top_hwnd, x, y, pil_rgba):
                 hdc_mem, ctypes.byref(pt_src),
                 0, ctypes.byref(bf), ULW_ALPHA
             )
+            if not ok:
+                # Auto-recover from ERROR_INVALID_PARAMETER (87) caused when Tkinter or
+                # SW_HIDE switches a layered window out of UpdateLayeredWindow mode.
+                cur_ex = user32.GetWindowLongW(top_hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongW(top_hwnd, GWL_EXSTYLE, cur_ex & ~WS_EX_LAYERED)
+                user32.SetWindowLongW(top_hwnd, GWL_EXSTYLE, cur_ex | WS_EX_LAYERED)
+                ok = user32.UpdateLayeredWindow(
+                    top_hwnd, hdc_screen,
+                    ctypes.byref(pt_dst), ctypes.byref(sz),
+                    hdc_mem, ctypes.byref(pt_src),
+                    0, ctypes.byref(bf), ULW_ALPHA
+                )
             return bool(ok)
         finally:
             user32.ReleaseDC(0, hdc_screen)
     except Exception as e:
         print(f"[WindowUtils] UpdateLayeredWindow error: {e}")
         return False
+
+
+def cancel_window_animation(window):
+    job = getattr(window, '_motion_job', None)
+    if job:
+        try:
+            window.after_cancel(job)
+        except tk.TclError:
+            pass
+    window._motion_job = None
+
+
+def animate_window(window, showing=True, on_done=None, layered_hwnd=None):
+    """Short, cancellable transition; reuses the existing layered surface."""
+    import time
+    cancel_window_animation(window)
+    if not window.winfo_exists():
+        return
+    started = time.monotonic()
+    x, y = window.winfo_x(), window.winfo_y()
+    enabled = wintypes.BOOL(True)
+    user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(enabled), 0)
+
+    def step():
+        window._motion_job = None
+        if not window.winfo_exists():
+            return
+        progress = min(1.0, (time.monotonic() - started) / .13) if enabled.value else 1.0
+        eased = 1 - (1 - progress) ** 3
+        opacity = eased if showing else 1 - eased
+        entry = _surface_cache.get(layered_hwnd)
+        if entry:
+            w, h, dc, *_ = entry
+            point = wintypes.POINT(x, y + int((1 - opacity) * 6))
+            size = wintypes.SIZE(w, h)
+            source = wintypes.POINT(0, 0)
+            blend = BLENDFUNCTION(AC_SRC_OVER, 0, int(opacity * 255), AC_SRC_ALPHA)
+            user32.UpdateLayeredWindow(layered_hwnd, None, ctypes.byref(point), ctypes.byref(size), dc, ctypes.byref(source), 0, ctypes.byref(blend), ULW_ALPHA)
+        elif not layered_hwnd:
+            window.attributes('-alpha', opacity)
+        if progress < 1:
+            window._motion_job = window.after(25, step)
+        elif on_done:
+            on_done()
+    step()
+
+
+def enable_native_motion(window):
+    window.update_idletasks()
+    hwnd = user32.GetAncestor(window.winfo_id(), GA_ROOT) or window.winfo_id()
+    disabled = wintypes.BOOL(False)
+    try:
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 3, ctypes.byref(disabled), ctypes.sizeof(disabled))
+    except OSError:
+        pass
+    animate_window(window)
 
 
 def flatten_pil_for_colorkey(pil_rgba, key_rgb=(1, 2, 3), alpha_threshold=50):
@@ -326,7 +401,7 @@ _FONT_VARIANTS = {
     "Verdana": ("verdana.ttf", "verdanab.ttf", "verdanai.ttf", "verdanaz.ttf"),
     "Tahoma": ("tahoma.ttf", "tahomabd.ttf", "segoeuii.ttf", "segoeuiz.ttf"),
 }
-_shared_font_cache = {}
+_shared_font_cache = OrderedDict()
 
 
 def resolve_styled_font(family="Segoe UI", size=12, bold=False, italic=False):
@@ -337,6 +412,7 @@ def resolve_styled_font(family="Segoe UI", size=12, bold=False, italic=False):
     key = (fam, sz, bool(bold), bool(italic))
     cached = _shared_font_cache.get(key)
     if cached is not None:
+        _shared_font_cache.move_to_end(key)
         return cached
 
     variants = _FONT_VARIANTS.get(fam) or _FONT_VARIANTS["Segoe UI"]
@@ -353,8 +429,8 @@ def resolve_styled_font(family="Segoe UI", size=12, bold=False, italic=False):
     if font_obj is None:
         font_obj = ImageFont.load_default()
 
-    if len(_shared_font_cache) >= 48:
-        _shared_font_cache.clear()
+    while len(_shared_font_cache) >= 32:
+        _shared_font_cache.popitem(last=False)
     _shared_font_cache[key] = font_obj
     return font_obj
 
@@ -496,9 +572,12 @@ def get_blurred_desktop_backdrop(x, y, w, h, screen_w, screen_h, blur_radius=16)
             ):
                 with Image.open(wp_path) as raw:
                     # Downscale 1/2 for super-fast heavy optical blur + minimal RAM (<2 MB)
-                    half_sz = (max(160, sz[0] // 2), max(120, sz[1] // 2))
-                    fitted = ImageOps.fit(raw.convert("RGB"), half_sz, method=Image.Resampling.BILINEAR)
-                    blurred_wp = fitted.filter(ImageFilter.GaussianBlur(radius=max(6, int(blur_radius * 0.65))))
+                    scale = min(.5, 960 / sz[0], 540 / sz[1])
+                    half_sz = (max(1, int(sz[0] * scale)), max(1, int(sz[1] * scale)))
+                    raw.draft("RGB", half_sz)
+                    fitted = ImageOps.fit(raw, half_sz, method=Image.Resampling.BILINEAR).convert("RGB")
+                    radius = max(1, max(6, int(blur_radius * .65)) * scale / .5)
+                    blurred_wp = fitted.filter(ImageFilter.GaussianBlur(radius=radius))
                 _WALLPAPER_CACHE["path"] = wp_path
                 _WALLPAPER_CACHE["mtime"] = mt
                 _WALLPAPER_CACHE["size"] = sz
@@ -506,10 +585,11 @@ def get_blurred_desktop_backdrop(x, y, w, h, screen_w, screen_h, blur_radius=16)
 
             wp_half = _WALLPAPER_CACHE["img"]
             if wp_half is not None:
-                hx1 = max(0, min(wp_half.width - 2, int(x // 2)))
-                hy1 = max(0, min(wp_half.height - 2, int(y // 2)))
-                hx2 = max(hx1 + 2, min(wp_half.width, int((x + w + 1) // 2)))
-                hy2 = max(hy1 + 2, min(wp_half.height, int((y + h + 1) // 2)))
+                sx, sy = wp_half.width / sz[0], wp_half.height / sz[1]
+                hx1 = max(0, min(wp_half.width - 2, int(x * sx)))
+                hy1 = max(0, min(wp_half.height - 2, int(y * sy)))
+                hx2 = max(hx1 + 2, min(wp_half.width, int((x + w + 1) * sx)))
+                hy2 = max(hy1 + 2, min(wp_half.height, int((y + h + 1) * sy)))
                 crop = wp_half.crop((hx1, hy1, hx2, hy2)).resize((max(1, int(w)), max(1, int(h))), Image.Resampling.BILINEAR)
                 return crop.convert("RGBA")
     except Exception:
@@ -553,5 +633,206 @@ def get_battery_status():
     except Exception:
         pass
     return {"has_battery": False, "percent": 100, "charging": True, "saver": False, "life_minutes": None}
+
+
+def resolve_shortcut_target(path):
+    """Resolves a .lnk file target via native IShellLinkW COM (never WScript.Shell), or returns cleaned path."""
+    raw = os.path.expandvars((path or "").strip().strip('"')).strip()
+    if not raw:
+        return ""
+    if raw.lower().endswith(".lnk") and os.path.exists(raw):
+        try:
+            import pythoncom
+            from win32com.shell import shell
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+            sl = pythoncom.CoCreateInstance(
+                shell.CLSID_ShellLink, None, pythoncom.CLSCTX_INPROC_SERVER, shell.IID_IShellLink
+            )
+            pf = sl.QueryInterface(pythoncom.IID_IPersistFile)
+            pf.Load(os.path.abspath(raw))
+            tgt, _ = sl.GetPath(0)
+            cleaned_tgt = os.path.expandvars((tgt or "").strip().strip('"')).strip()
+            if cleaned_tgt and os.path.exists(cleaned_tgt):
+                return cleaned_tgt
+        except Exception:
+            pass
+    return raw
+
+
+def open_file_location(path):
+    """Opens Windows Explorer selecting the resolved file or folder via SHOpenFolderAndSelectItems."""
+    import subprocess
+    raw = os.path.expandvars((path or "").strip().strip('"')).strip()
+    if not raw:
+        return False
+    resolved = resolve_shortcut_target(raw)
+    target = resolved if (resolved and os.path.exists(resolved)) else (raw if os.path.exists(raw) else "")
+    if not target:
+        return False
+    abs_p = os.path.abspath(target)
+    try:
+        ole32 = ctypes.windll.ole32
+        shell32 = ctypes.windll.shell32
+        ole32.CoInitialize(None)
+        try:
+            shell32.ILCreateFromPathW.argtypes = [wintypes.LPCWSTR]
+            shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+            shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p, wintypes.DWORD]
+            shell32.SHOpenFolderAndSelectItems.restype = ctypes.HRESULT
+            shell32.ILFree.argtypes = [ctypes.c_void_p]
+            pidl = shell32.ILCreateFromPathW(abs_p)
+            if pidl:
+                try:
+                    hr = shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0)
+                    if hr == 0:
+                        return True
+                finally:
+                    shell32.ILFree(pidl)
+        finally:
+            try:
+                ole32.CoUninitialize()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        subprocess.Popen(["explorer.exe", f"/select,{abs_p}"])
+        return True
+    except Exception:
+        return False
+
+
+def copy_files_to_clipboard(paths):
+    """Copies one or more existing file/folder paths onto the Windows clipboard as CF_HDROP for pasting."""
+    import struct
+    if isinstance(paths, (str, os.PathLike)):
+        paths = [str(paths)]
+    valid = []
+    for p in paths or []:
+        rp = resolve_shortcut_target(str(p))
+        use_p = rp if (rp and os.path.exists(rp)) else os.path.expandvars(str(p or "").strip().strip('"')).strip()
+        if use_p and os.path.exists(use_p):
+            valid.append(os.path.abspath(use_p))
+    if not valid:
+        return False
+    payload = struct.pack("<IiiII", 20, 0, 0, 0, 1) + ("\0".join(valid) + "\0\0").encode("utf-16-le")
+    try:
+        import win32clipboard
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_HDROP, payload)
+        finally:
+            win32clipboard.CloseClipboard()
+        return True
+    except Exception:
+        return False
+
+
+def copy_text_to_clipboard(text):
+    """Copies Unicode text cleanly onto the Windows clipboard."""
+    if text is None:
+        return False
+    try:
+        import win32clipboard
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_UNICODETEXT, str(text))
+        finally:
+            win32clipboard.CloseClipboard()
+        return True
+    except Exception:
+        return False
+
+
+def share_path_via_email(path, display_name=""):
+    """Shares a URL or local file via Outlook COM attachment (when available) or mailto: URI."""
+    import urllib.parse
+    raw = os.path.expandvars((path or "").strip().strip('"')).strip()
+    if not raw:
+        return False
+    low = raw.lower()
+    if low.startswith(("http://", "https://")):
+        subj = urllib.parse.quote(display_name or "Enlace compartido")
+        body = urllib.parse.quote(raw)
+        try:
+            os.startfile(f"mailto:?subject={subj}&body={body}")
+            return True
+        except Exception:
+            return False
+
+    resolved = resolve_shortcut_target(raw)
+    target = resolved if (resolved and os.path.exists(resolved)) else (raw if os.path.exists(raw) else raw)
+    if target and os.path.isfile(target):
+        try:
+            import pythoncom
+            import win32com.client
+            try:
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+            outlook = win32com.client.Dispatch("Outlook.Application")
+            mail = outlook.CreateItem(0)
+            mail.Subject = display_name or os.path.basename(target)
+            mail.Attachments.Add(os.path.abspath(target))
+            mail.Display(False)
+            return True
+        except Exception:
+            pass
+    try:
+        subj = urllib.parse.quote(display_name or os.path.basename(target) or "Archivo compartido")
+        body = urllib.parse.quote(os.path.abspath(target) if target else raw)
+        os.startfile(f"mailto:?subject={subj}&body={body}")
+        return True
+    except Exception:
+        return False
+
+
+class _SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", ctypes.c_ulong),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hMonitor", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
+
+
+def show_file_properties(path):
+    """Opens the native Windows Properties dialog for the given file/folder/shortcut."""
+    raw = os.path.expandvars((path or "").strip().strip('"')).strip()
+    if not raw:
+        return False
+    resolved = resolve_shortcut_target(raw)
+    target = resolved if (resolved and os.path.exists(resolved)) else (raw if os.path.exists(raw) else "")
+    if not target:
+        return False
+    try:
+        shell32 = ctypes.windll.shell32
+        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(_SHELLEXECUTEINFOW)]
+        shell32.ShellExecuteExW.restype = wintypes.BOOL
+        sei = _SHELLEXECUTEINFOW()
+        sei.cbSize = ctypes.sizeof(_SHELLEXECUTEINFOW)
+        sei.fMask = 0x0000000C  # SEE_MASK_INVOKEIDLIST
+        sei.lpVerb = "properties"
+        sei.lpFile = os.path.abspath(target)
+        sei.nShow = 5
+        return bool(shell32.ShellExecuteExW(ctypes.byref(sei)))
+    except Exception:
+        return False
 
 

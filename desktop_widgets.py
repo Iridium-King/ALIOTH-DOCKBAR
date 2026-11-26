@@ -7,13 +7,16 @@ import struct
 import ctypes
 import subprocess
 import uuid
+import copy
+from collections import OrderedDict
+import todo_store
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog
 from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageOps, ImageFilter
 
 from window_utils import (
-    set_tool_window, update_layered_pil, release_layered_surface,
+    set_tool_window, update_layered_pil, release_layered_surface, animate_window, cancel_window_animation,
     flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse,
     alpha_line, resolve_styled_font, find_lowest_app_above_desktop,
     get_battery_status, is_hwnd_behind, get_blurred_desktop_backdrop,
@@ -259,7 +262,7 @@ class BaseDesktopWidget:
 
     def _get_spacing_mult(self):
         try:
-            return max(0.55, min(2.0, float(self.get_cfg("item_spacing", 1.0) or 1.0)))
+            return max(0.55, min(2.5, float(self.get_cfg("item_spacing", 1.0) or 1.0)))
         except Exception:
             return 1.0
 
@@ -277,6 +280,45 @@ class BaseDesktopWidget:
 
     def _min_w(self):
         return max(110, int(120 * self.dpi_scale))
+
+    def _max_h(self):
+        return 720
+
+    def _get_screen_and_work_bounds(self):
+        """Returns (mon_x1, mon_y1, mon_x2, mon_y2, work_x1, work_y1, work_x2, work_y2) in virtual/primary screen coords."""
+        sw = int(self.root.winfo_screenwidth())
+        sh = int(self.root.winfo_screenheight())
+        mon_box = (0, 0, sw, sh)
+        work_box = (0, 0, sw, sh)
+        try:
+            class _MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD),
+                ]
+            hwnd = None
+            if self.window and self.window.winfo_exists():
+                hwnd = self.top_hwnd or user32.GetAncestor(self.window.winfo_id(), 2) or self.window.winfo_id()
+            hmon = user32.MonitorFromWindow(hwnd, 2) if hwnd else user32.MonitorFromPoint(wintypes.POINT(int(self.default_x), int(self.default_y)), 2)
+            if hmon:
+                mi = _MONITORINFO()
+                mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                if user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                    m, w = mi.rcMonitor, mi.rcWork
+                    mon_box = (int(m.left), int(m.top), int(m.right), int(m.bottom))
+                    work_box = (int(w.left), int(w.top), int(w.right), int(w.bottom))
+                    return (*mon_box, *work_box)
+        except Exception:
+            pass
+        try:
+            wr = wintypes.RECT()
+            if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(wr), 0):
+                work_box = (int(wr.left), int(wr.top), int(wr.right), int(wr.bottom))
+        except Exception:
+            pass
+        return (*mon_box, *work_box)
 
     def _min_h(self):
         return max(34, int(38 * self.dpi_scale))
@@ -328,8 +370,10 @@ class BaseDesktopWidget:
             return max(0, sw - w - mx), max(mt, sh - h - mb)
         x = self.get_cfg("x", self.default_x)
         y = self.get_cfg("y", self.default_y)
-        x = max(0, min(sw - w, int(x)))
-        y = max(32, min(sh - h, int(y)))
+        mx1, my1, mx2, my2, wx1, wy1, wx2, wy2 = self._get_screen_and_work_bounds()
+        top_limit = (wy1 if wy1 > my1 else my1) if self.widget_id == "todo_list" else max(32, wy1)
+        x = max(mx1, min(mx2 - w, int(x)))
+        y = max(top_limit, min(my2 - h, int(y)))
         return x, y
 
     def _set_window_size_live(self, new_w, new_h):
@@ -493,8 +537,14 @@ class BaseDesktopWidget:
 
     def _toggle_minimized(self):
         nxt = not bool(self.get_cfg("minimized", False))
-        self.set_cfg("minimized", nxt)
-        self._redraw_now()
+        def apply():
+            if not self.window or not self.window.winfo_exists():
+                return
+            self.set_cfg('minimized', nxt)
+            self._redraw_now()
+            animate_window(self.window, layered_hwnd=self.top_hwnd)
+        if self.window and self.window.winfo_exists():
+            animate_window(self.window, showing=False, on_done=apply, layered_hwnd=self.top_hwnd)
 
     def _toggle_auto_collapse(self):
         nxt = not bool(self.get_cfg("auto_collapse", False))
@@ -563,6 +613,8 @@ class BaseDesktopWidget:
 
     def show(self):
         if self.window and self.window.winfo_exists():
+            self._hiding = False
+            animate_window(self.window, layered_hwnd=self.top_hwnd)
             return
 
         self.win_w, self.win_h = self._compute_dims()
@@ -597,8 +649,17 @@ class BaseDesktopWidget:
 
         self._apply_z_order()
         self._start_update_loop()
+        animate_window(self.window, layered_hwnd=self.top_hwnd)
 
-    def hide(self):
+    def hide(self, animate=True):
+        if animate and self.window and self.window.winfo_exists():
+            if not getattr(self, '_hiding', False):
+                self._hiding = True
+                animate_window(self.window, showing=False, on_done=lambda: self.hide(animate=False), layered_hwnd=self.top_hwnd)
+            return
+        self._hiding = False
+        if self.window:
+            cancel_window_animation(self.window)
         if self._collapse_job:
             try:
                 self.root.after_cancel(self._collapse_job)
@@ -623,6 +684,12 @@ class BaseDesktopWidget:
         self.canvas = None
         self.top_hwnd = None
         self._card_bg_cache = None
+        self.photo_ref = None
+        self._font_cache.clear()
+        for name in ('_qa_icon_cache', '_icon_cache'):
+            cache = getattr(self, name, None)
+            if cache is not None:
+                cache.clear()
         self._last_z_state = None
 
     def _apply_z_order(self, lowest_app_override=None, desk_cover_override=None, exclude_hwnds=()):
@@ -789,8 +856,15 @@ class BaseDesktopWidget:
             rdir = self.resize_dir or "se"
             dx = event.x_root - self.resize_origin_x
             dy = event.y_root - self.resize_origin_y
+            mx1, my1, mx2, my2, wx1, wy1, wx2, wy2 = self._get_screen_and_work_bounds()
             min_w, max_w = self._min_w(), 960
-            min_h, max_h = self._min_h(), 720
+            min_h, max_h = self._min_h(), self._max_h()
+            if self.widget_id == "todo_list":
+                top_limit = wy1 if wy1 > my1 else my1
+                bot_limit = my2
+            else:
+                top_limit = max(32, wy1)
+                bot_limit = my2
 
             new_x = self.resize_start_x
             new_y = self.resize_start_y
@@ -805,17 +879,17 @@ class BaseDesktopWidget:
                 new_w = cand_w
                 new_x = right_edge - new_w
             if "s" in rdir:
-                new_h = max(min_h, min(max_h, int(self.resize_start_h + dy)))
+                avail_down = max(min_h, bot_limit - new_y)
+                new_h = max(min_h, min(max_h, avail_down, int(self.resize_start_h + dy)))
             if "n" in rdir:
                 bottom_edge = self.resize_start_y + self.resize_start_h
-                cand_h = max(min_h, min(max_h, int(self.resize_start_h - dy)))
+                max_up_h = max(min_h, bottom_edge - top_limit)
+                cand_h = max(min_h, min(max_h, max_up_h, int(self.resize_start_h - dy)))
                 new_h = cand_h
                 new_y = bottom_edge - new_h
 
-            sw = self.root.winfo_screenwidth()
-            sh = self.root.winfo_screenheight()
-            new_x = max(0, min(sw - new_w, int(new_x)))
-            new_y = max(32, min(sh - new_h, int(new_y)))
+            new_x = max(mx1, min(mx2 - new_w, int(new_x)))
+            new_y = max(top_limit, min(bot_limit - new_h, int(new_y)))
 
             if (new_w != self.win_w or new_h != self.win_h
                     or new_x != self.window.winfo_x() or new_y != self.window.winfo_y()):
@@ -1067,10 +1141,39 @@ def _import_widget_bg_image(src_path, max_dim=960):
 
 
 class ClockWidget(BaseDesktopWidget):
-    """Modern frosted glass digital clock and date desktop widget (zero-allocation minute cache)."""
+    """Modern frosted glass digital and analog clock desktop widget."""
+    _ASPECT_DIMS = {
+        "auto": (274, 122),
+        "wide": (330, 114),
+        "card": (224, 168),
+        "square": (196, 196),
+    }
+
     def __init__(self, root, config_mgr, on_open_settings=None):
-        super().__init__(root, config_mgr, "clock", default_x=24, default_y=50, default_w=270, default_h=112, on_open_settings=on_open_settings)
+        super().__init__(root, config_mgr, "clock", default_x=24, default_y=50, default_w=274, default_h=122, on_open_settings=on_open_settings)
         self._last_clock_sig = None
+
+    def _compute_full_dims(self):
+        cw = self.get_cfg("custom_w", None)
+        ch = self.get_cfg("custom_h", None)
+        s = self._get_effective_scale()
+        ap = (self.get_cfg("aspect_preset", "auto") or "auto").lower()
+        bw, bh = self._ASPECT_DIMS.get(ap, (274, 122))
+        style = (self.get_cfg("clock_style", "moderno") or "moderno").lower()
+        f_sc = self._get_font_scale()
+        sp = self._get_spacing_mult()
+        extra_h = 0
+        if ch is None and not (ap == "square" and style in ("analogico", "analogico_suizo", "analogico_clasico", "analogico_neon")):
+            extra_h = max(0, int((f_sc - 1.0) * 58 * s) + int((sp - 1.0) * 28 * s))
+        w = max(self._min_w(), int(cw)) if cw is not None else max(self._min_w(), int(bw * s))
+        h = max(int(56 * self.dpi_scale), int(ch)) if ch is not None else max(int(56 * self.dpi_scale), int(bh * s) + extra_h)
+        return w, h
+
+    def _set_aspect_preset(self, preset):
+        self.set_cfg("aspect_preset", preset)
+        self.set_cfg("custom_w", None)
+        self.set_cfg("custom_h", None)
+        self._update_clock(force_draw=True)
 
     def _start_update_loop(self):
         self._update_clock()
@@ -1108,11 +1211,29 @@ class ClockWidget(BaseDesktopWidget):
         menu.add_command("Formato 24 Horas", self._toggle_24h, checked=bool(self.get_cfg("format_24h", True)))
         menu.add_command("Mostrar Segundero", self._toggle_seconds, checked=bool(self.get_cfg("show_seconds", False)))
         menu.add_separator()
-        menu.add_header("Estilo del Reloj")
-        menu.add_command("Moderno (Cristal)", lambda: self._set_style("moderno"), checked=(cur_style == "moderno"))
-        menu.add_command("Minimalista", lambda: self._set_style("minimal"), checked=(cur_style == "minimal"))
-        menu.add_command("Neón Futurista", lambda: self._set_style("neon"), checked=(cur_style == "neon"))
-        menu.add_command("Clásico Editorial", lambda: self._set_style("clasico"), checked=(cur_style == "clasico"))
+        menu.add_header("Estilo Visual del Reloj")
+        for st_id, st_lbl in (
+            ("moderno", "Moderno (Cristal)"),
+            ("minimal", "Minimalista"),
+            ("neon", "Neón Futurista"),
+            ("clasico", "Clásico Editorial"),
+            ("flip", "Flip Retro"),
+            ("led", "LED Estudio"),
+            ("analogico", "Analógico Cristal"),
+            ("analogico_suizo", "Analógico Suizo (Claro)"),
+            ("analogico_clasico", "Analógico Cronógrafo"),
+            ("analogico_neon", "Analógico Neón"),
+        ):
+            menu.add_command(st_lbl, lambda k=st_id: self._set_style(k), checked=(cur_style == st_id))
+        sec_ap = menu.add_section("Proporción del Reloj", expanded=False)
+        cur_ap = (self.get_cfg("aspect_preset", "auto") or "auto").lower()
+        for ap_id, ap_lbl in (
+            ("auto", "Automático Estándar"),
+            ("wide", "Horizontal (3:1)"),
+            ("card", "Tarjeta (4:3)"),
+            ("square", "Cuadrado (1:1)"),
+        ):
+            sec_ap.add_command(ap_lbl, lambda a=ap_id: self._set_aspect_preset(a), checked=(cur_ap == ap_id))
         menu.add_separator()
         menu.add_header("Alineación y Colores")
         menu.add_command("Alinear a la Izquierda", lambda: self._set_alignment("left"), checked=(cur_align == "left"))
@@ -1123,6 +1244,102 @@ class ClockWidget(BaseDesktopWidget):
         menu.add_separator()
         self._append_common_menu_items(menu)
         menu.show(event.x_root, event.y_root)
+
+    def _draw_analog_dial(self, composite, cx, cy, radius, now, style, show_sec, time_rgb, date_rgb):
+        """Draws a crisp 2x supersampled analog watch face onto `composite`."""
+        d_sz = max(44, int(radius * 2) + 8)
+        ss = 2
+        hi_s = d_sz * ss
+        hi = Image.new("RGBA", (hi_s, hi_s), (0, 0, 0, 0))
+        hd = ImageDraw.Draw(hi, "RGBA")
+        hcx = hcy = hi_s / 2.0
+        r = (radius * ss) - 2
+
+        is_gold = (style == "analogico_clasico")
+        is_swiss = (style == "analogico_suizo")
+        is_neon_dial = (style == "analogico_neon")
+        if is_gold:
+            face_fill = (16, 15, 14, 235)
+            bezel_col = (212, 175, 55, 225)
+            tick_maj = (234, 199, 98, 245)
+            tick_min = (180, 145, 55, 130)
+            hr_col = (245, 215, 118, 255)
+            min_col = (248, 245, 235, 250)
+            sec_col = (239, 68, 68, 255)
+        elif is_swiss:
+            face_fill = (244, 247, 250, 246)
+            bezel_col = (100, 116, 139, 235)
+            tick_maj = (15, 23, 42, 245)
+            tick_min = (100, 116, 139, 155)
+            hr_col = (15, 23, 42, 255)
+            min_col = (51, 65, 85, 250)
+            sec_col = (220, 38, 38, 255)
+        elif is_neon_dial:
+            face_fill = (8, 12, 22, 242)
+            bezel_col = (34, 211, 238, 225)
+            tick_maj = (34, 211, 238, 245)
+            tick_min = (56, 189, 248, 120)
+            hr_col = (34, 211, 238, 255)
+            min_col = (224, 242, 254, 250)
+            sec_col = (244, 114, 182, 255)
+        else:
+            face_fill = (14, 21, 36, 225)
+            bezel_col = (56, 189, 248, 195)
+            tick_maj = (241, 245, 249, 235)
+            tick_min = (148, 163, 184, 120)
+            hr_col = (*time_rgb, 255)
+            min_col = (*date_rgb, 250)
+            sec_col = (56, 189, 248, 255)
+
+        hd.ellipse([hcx - r, hcy - r, hcx + r, hcy + r], fill=face_fill, outline=bezel_col, width=max(3, int(r * 0.045)))
+        if is_gold:
+            r_in = r * 0.90
+            hd.ellipse([hcx - r_in, hcy - r_in, hcx + r_in, hcy + r_in], outline=(212, 175, 55, 95), width=2)
+        elif is_neon_dial:
+            r_arc = r * 0.93
+            sweep = max(8.0, (now.tm_sec if show_sec else now.tm_min) * 6.0)
+            hd.arc([hcx - r_arc, hcy - r_arc, hcx + r_arc, hcy + r_arc], start=-90, end=-90 + sweep, fill=(34, 211, 238, 245), width=max(4, int(r * 0.055)))
+
+        for k in range(60):
+            ang = math.radians(k * 6.0 - 90.0)
+            is_q = (k % 15 == 0)
+            is_h = (k % 5 == 0)
+            if not is_h and r < 52:
+                continue
+            r2 = r * 0.91
+            r1 = r * (0.74 if is_q else (0.80 if is_h else 0.86))
+            w_t = max(2, int(r * (0.055 if is_q else (0.035 if is_h else 0.018))))
+            col_t = tick_maj if is_h else tick_min
+            hd.line(
+                [(hcx + math.cos(ang) * r1, hcy + math.sin(ang) * r1),
+                 (hcx + math.cos(ang) * r2, hcy + math.sin(ang) * r2)],
+                fill=col_t, width=w_t
+            )
+
+        if is_gold and r >= 64:
+            # Subtle day-of-month window at 3 o'clock
+            win_w, win_h = int(r * 0.28), int(r * 0.20)
+            wx1, wy1 = int(hcx + r * 0.44 - win_w / 2), int(hcy - win_h / 2)
+            hd.rounded_rectangle([wx1, wy1, wx1 + win_w, wy1 + win_h], radius=4, fill=(32, 28, 22, 240), outline=(212, 175, 55, 180), width=2)
+            f_win = self._get_styled_font(max(9, int(r * 0.12)), bold_default=True, default_family="Georgia")
+            hd.text((wx1 + win_w / 2, hcy), str(now.tm_mday), fill=(248, 240, 215, 255), font=f_win, anchor="mm")
+
+        h_ang = math.radians(((now.tm_hour % 12) + now.tm_min / 60.0) * 30.0 - 90.0)
+        m_ang = math.radians((now.tm_min + now.tm_sec / 60.0) * 6.0 - 90.0)
+        hd.line([(hcx, hcy), (hcx + math.cos(h_ang) * (r * 0.52), hcy + math.sin(h_ang) * (r * 0.52))], fill=hr_col, width=max(4, int(r * 0.085)))
+        hd.line([(hcx, hcy), (hcx + math.cos(m_ang) * (r * 0.74), hcy + math.sin(m_ang) * (r * 0.74))], fill=min_col, width=max(3, int(r * 0.055)))
+        if show_sec:
+            s_ang = math.radians(now.tm_sec * 6.0 - 90.0)
+            hd.line(
+                [(hcx - math.cos(s_ang) * (r * 0.16), hcy - math.sin(s_ang) * (r * 0.16)),
+                 (hcx + math.cos(s_ang) * (r * 0.80), hcy + math.sin(s_ang) * (r * 0.80))],
+                fill=sec_col, width=max(2, int(r * 0.028))
+            )
+        cap_r = max(4, int(r * 0.075))
+        hd.ellipse([hcx - cap_r, hcy - cap_r, hcx + cap_r, hcy + cap_r], fill=sec_col if show_sec else hr_col)
+
+        dial = hi.resize((d_sz, d_sz), Image.Resampling.LANCZOS)
+        composite.alpha_composite(dial, (int(round(cx - d_sz / 2.0)), int(round(cy - d_sz / 2.0))))
 
     def _update_clock(self, force_draw=False):
         if not self.window or not self.canvas:
@@ -1162,11 +1379,15 @@ class ClockWidget(BaseDesktopWidget):
             self._set_window_size_live(fw, fh)
 
         w, h = self.win_w, self.win_h
-        style = self.get_cfg("clock_style", "moderno")
-        w_style = self.get_cfg("widget_style", None) or style
+        style = (self.get_cfg("clock_style", "moderno") or "moderno").lower()
+        ap_preset = (self.get_cfg("aspect_preset", "auto") or "auto").lower()
+        is_analog = style in ("analogico", "analogico_suizo", "analogico_clasico", "analogico_neon")
+        w_style = self.get_cfg("widget_style", None) or (
+            "clasico" if style == "analogico_clasico" else ("neon" if style in ("led", "analogico_neon") else style)
+        )
         align = self.get_cfg("alignment", "left")
         sig = (
-            "full", w, h, time_str, ampm_str, date_str, style, w_style, align,
+            "full", w, h, time_str, ampm_str, date_str, now.tm_sec if (show_sec or is_analog) else -1, style, w_style, ap_preset, align,
             self.get_cfg("opacity"), self.get_cfg("bg_color"), self.get_cfg("bg_image"),
             self.get_cfg("bg_image_dim"), self.get_cfg("time_color"), self.get_cfg("date_color"),
             self.get_cfg("font_family"), self.get_cfg("font_scale"), self.get_cfg("font_bold"),
@@ -1177,8 +1398,9 @@ class ClockWidget(BaseDesktopWidget):
             return
         self._last_clock_sig = sig
 
-        s = min(w / 270.0, h / 112.0)
-        composite = self._build_card_surface(w, h, style_override=w_style, accent_rgb=(56, 189, 248))
+        s = min(w / 274.0, h / 122.0)
+        accent_map = (212, 175, 55) if style in ("clasico", "analogico_clasico") else ((16, 185, 129) if style == "led" else (56, 189, 248))
+        composite = self._build_card_surface(w, h, style_override=w_style, accent_rgb=accent_map)
         draw = ImageDraw.Draw(composite, "RGBA")
 
         time_rgb = _hex_to_rgb(self.get_cfg("time_color", "#ffffff"), (255, 255, 255))
@@ -1190,24 +1412,158 @@ class ClockWidget(BaseDesktopWidget):
             self.min_btn_rect = (0, 0, 0, 0)
 
         sp = self._get_spacing_mult()
+        pad_x = int(18 * s)
+
+        if is_analog:
+            wide_mode = w >= h * 1.38
+            if wide_mode:
+                dial_r = max(24, min((h - int(20 * s)) / 2.0, w * 0.21))
+                gap_h = max(int(12 * s), int(16 * s * sp))
+                if align == "right":
+                    dial_cx = w - pad_x - dial_r - int(4 * s)
+                    txt_left = pad_x
+                    txt_right = dial_cx - dial_r - gap_h
+                else:
+                    dial_cx = pad_x + dial_r + int(2 * s)
+                    txt_left = dial_cx + dial_r + gap_h
+                    txt_right = w - pad_x
+                self._draw_analog_dial(composite, dial_cx, h / 2.0, dial_r, now, style, show_sec, time_rgb, date_rgb)
+                draw = ImageDraw.Draw(composite, "RGBA")
+                def_fam = "Georgia" if style == "analogico_clasico" else "Segoe UI"
+                f_dig = self._get_styled_font(22 * s, bold_default=True, default_family=def_fam)
+                f_dt = self._get_styled_font(11.5 * s, bold_default=False, default_family=def_fam)
+                dig_txt = f"{time_str} {ampm_str}".strip()
+                max_tw = max(40, txt_right - txt_left)
+                while draw.textlength(dig_txt, font=f_dig) > max_tw and f_dig.size > 11:
+                    f_dig = self._get_styled_font(f_dig.size - 1, bold_default=True, default_family=def_fam)
+                dt_short = f"{dia_sem[:3]} {now.tm_mday} {mes_nom[:3]}"
+                while draw.textlength(dt_short, font=f_dt) > max_tw and f_dt.size > 9:
+                    f_dt = self._get_styled_font(f_dt.size - 1, bold_default=False, default_family=def_fam)
+                tb = draw.textbbox((0, 0), dig_txt, font=f_dig)
+                db = draw.textbbox((0, 0), dt_short, font=f_dt)
+                th_ink, dh_ink = tb[3] - tb[1], db[3] - db[1]
+                vgap = max(int(8 * s), int(14 * s * sp))
+                blk_h = th_ink + vgap + dh_ink
+                vis_y1 = (h - blk_h) / 2.0
+                tx_pos = (txt_left + txt_right) / 2.0 if align == "center" else (txt_right if align == "right" else txt_left)
+                anc_top = "ma" if align == "center" else ("ra" if align == "right" else "la")
+                draw.text((tx_pos, vis_y1 - tb[1]), dig_txt, fill=(*time_rgb, 255), font=f_dig, anchor=anc_top)
+                draw.text((tx_pos, vis_y1 + th_ink + vgap - db[1]), dt_short, fill=(*date_rgb, 235), font=f_dt, anchor=anc_top)
+            else:
+                vgap_c = max(int(8 * s), int(12 * s * sp))
+                f_dt = self._get_styled_font(10.5 * s, bold_default=True, default_family="Georgia" if style == "analogico_clasico" else "Segoe UI")
+                dt_short = f"{dia_sem[:3]} {now.tm_mday} {mes_nom[:3]}"
+                db = draw.textbbox((0, 0), dt_short, font=f_dt)
+                dh_ink = db[3] - db[1]
+                avail_dial = h - int(18 * s) - vgap_c - dh_ink
+                dial_r = max(20, min(w * 0.38, avail_dial / 2.0))
+                dial_cy = int(10 * s) + dial_r
+                self._draw_analog_dial(composite, w / 2.0, dial_cy, dial_r, now, style, show_sec, time_rgb, date_rgb)
+                draw = ImageDraw.Draw(composite, "RGBA")
+                draw.text((w / 2.0, min(h - int(6 * s) - dh_ink, dial_cy + dial_r + vgap_c) - db[1]), dt_short, fill=(*date_rgb, 235), font=f_dt, anchor="ma")
+            self._render_to_canvas(composite, w, h)
+            self.update_job = self.root.after(500 if show_sec else 1000, self._update_clock)
+            return
+
+        if style == "flip":
+            hr_s, mn_s = time_str.split(":")[:2]
+            sec_s = time_str.split(":")[2] if show_sec and len(time_str.split(":")) > 2 else ""
+            f_flip = self._get_styled_font(31 * s, bold_default=True, default_family="Segoe UI")
+            f_dt = self._get_styled_font(11 * s, bold_default=False)
+            db = draw.textbbox((0, 0), date_str, font=f_dt)
+            dh_ink = db[3] - db[1]
+            gap_fd = max(int(10 * s), int(16 * s * sp))
+            card_w = int(66 * s)
+            card_h = max(int(36 * s), min(int(54 * s), int(h - int(18 * s) - gap_fd - dh_ink)))
+            gap_c = max(int(8 * s), int(11 * s * sp))
+            tot_w = card_w * 2 + gap_c + (int(34 * s) if (sec_s or ampm_str) else 0)
+            sx0 = (w - tot_w) // 2 if align == "center" else (w - pad_x - tot_w if align == "right" else pad_x)
+            cy0 = max(int(10 * s), int((h - (card_h + gap_fd + dh_ink)) / 2.0))
+            for idx_c, val_c in enumerate((hr_s, mn_s)):
+                cx1 = sx0 + idx_c * (card_w + gap_c)
+                cx2 = cx1 + card_w
+                alpha_rounded_rect(composite, [cx1, cy0, cx2, cy0 + card_h], radius=max(6, int(10 * s)), fill=(10, 14, 24, 240), outline=(148, 163, 184, 95), width=1)
+                draw = ImageDraw.Draw(composite, "RGBA")
+                draw.text(((cx1 + cx2) / 2.0, cy0 + card_h / 2.0), val_c, fill=(*time_rgb, 255), font=f_flip, anchor="mm")
+                alpha_line(composite, [(cx1 + 2, cy0 + card_h // 2), (cx2 - 2, cy0 + card_h // 2)], fill=(6, 9, 16, 215), width=max(1, int(1.8 * s)))
+            draw = ImageDraw.Draw(composite, "RGBA")
+            if sec_s or ampm_str:
+                rx_badge = sx0 + card_w * 2 + gap_c + int(16 * s)
+                f_sm = self._get_styled_font(13 * s, bold_default=True)
+                if sec_s:
+                    draw.text((rx_badge, cy0 + card_h * 0.36), f":{sec_s}", fill=(56, 189, 248, 250), font=f_sm, anchor="mm")
+                if ampm_str:
+                    draw.text((rx_badge, cy0 + card_h * (0.72 if sec_s else 0.5)), ampm_str, fill=(*date_rgb, 235), font=f_sm, anchor="mm")
+            dt_x = w / 2.0 if align == "center" else (w - pad_x if align == "right" else pad_x)
+            dt_anc = "ma" if align == "center" else ("ra" if align == "right" else "la")
+            vis_dy = min(h - int(6 * s) - dh_ink, cy0 + card_h + gap_fd)
+            draw.text((dt_x, vis_dy - db[1]), date_str, fill=(*date_rgb, 245), font=f_dt, anchor=dt_anc)
+            self._render_to_canvas(composite, w, h)
+            self.update_job = self.root.after(500 if show_sec else 1000, self._update_clock)
+            return
+
+        if style == "led":
+            f_led = self._get_styled_font(34 * s, bold_default=True, default_family="Consolas")
+            f_dt = self._get_styled_font(10.5 * s, bold_default=True, default_family="Consolas")
+            led_col = time_rgb if self.get_cfg("time_color", "#ffffff") != "#ffffff" else (52, 211, 153)
+            disp = f"{time_str} {ampm_str}".strip()
+            max_tw = max(60, w - pad_x * 2)
+            while draw.textlength(disp, font=f_led) > max_tw and f_led.size > 14:
+                f_led = self._get_styled_font(f_led.size - 1, bold_default=True, default_family="Consolas")
+            while draw.textlength(date_str.upper(), font=f_dt) > max_tw and f_dt.size > 9:
+                f_dt = self._get_styled_font(f_dt.size - 1, bold_default=True, default_family="Consolas")
+            tb = draw.textbbox((0, 0), disp, font=f_led)
+            db = draw.textbbox((0, 0), date_str.upper(), font=f_dt)
+            th_ink, dh_ink = tb[3] - tb[1], db[3] - db[1]
+            vgap = max(int(10 * s), int(16 * s * sp))
+            gap_bar = max(int(8 * s), int(11 * s * sp))
+            blk_h = th_ink + vgap + dh_ink + gap_bar + max(3, int(3.5 * s))
+            vis_ty = max(int(10 * s), (h - blk_h) // 2)
+            tx_pos = w / 2.0 if align == "center" else (w - pad_x if align == "right" else pad_x)
+            anc_top = "ma" if align == "center" else ("ra" if align == "right" else "la")
+            draw.text((tx_pos + 1, vis_ty - tb[1] + 1), disp, fill=(*led_col, 85), font=f_led, anchor=anc_top)
+            draw.text((tx_pos, vis_ty - tb[1]), disp, fill=(*led_col, 255), font=f_led, anchor=anc_top)
+            vis_dy = vis_ty + th_ink + vgap
+            draw.text((tx_pos, vis_dy - db[1]), date_str.upper(), fill=(*date_rgb, 225), font=f_dt, anchor=anc_top)
+            prog_y = min(h - int(8 * s), vis_dy + dh_ink + gap_bar)
+            prog_w = w - pad_x * 2
+            alpha_rounded_rect(composite, [pad_x, prog_y, pad_x + prog_w, prog_y + max(3, int(3.5 * s))], radius=2, fill=(255, 255, 255, 26))
+            fill_pw = max(4, int(prog_w * (now.tm_sec / 59.0)))
+            alpha_rounded_rect(composite, [pad_x, prog_y, pad_x + fill_pw, prog_y + max(3, int(3.5 * s))], radius=2, fill=(*led_col, 225))
+            self._render_to_canvas(composite, w, h)
+            self.update_job = self.root.after(500 if show_sec else 1000, self._update_clock)
+            return
+
         def_fam = "Georgia" if style == "clasico" else "Segoe UI"
         base_time_px = 34 * s if style == "clasico" else (40 * s if style == "minimal" else 36 * s)
         f_time = self._get_styled_font(base_time_px, bold_default=(style != "minimal"), default_family=def_fam)
         f_sec = self._get_styled_font(14 * s, bold_default=False, default_family=def_fam)
         f_date = self._get_styled_font(12 * s, bold_default=False, default_family=def_fam)
 
+        pad_x = int(20 * s)
+        max_avail_w = max(80, w - pad_x * 2)
+        while draw.textlength(time_str, font=f_time) > max_avail_w and f_time.size > 14:
+            f_time = self._get_styled_font(f_time.size - 1, bold_default=(style != "minimal"), default_family=def_fam)
+        while draw.textlength(date_str, font=f_date) > max_avail_w and f_date.size > 9:
+            f_date = self._get_styled_font(f_date.size - 1, bold_default=False, default_family=def_fam)
+
         t_bbox = draw.textbbox((0, 0), time_str, font=f_time)
+        t_left, t_top = t_bbox[0], t_bbox[1]
         t_w = t_bbox[2] - t_bbox[0]
         t_h = t_bbox[3] - t_bbox[1]
         d_bbox = draw.textbbox((0, 0), date_str, font=f_date)
+        d_left, d_top = d_bbox[0], d_bbox[1]
         d_w = d_bbox[2] - d_bbox[0]
         d_h = d_bbox[3] - d_bbox[1]
         ampm_w = 0
+        a_top = 0
+        a_h = 0
         if ampm_str:
             a_bbox = draw.textbbox((0, 0), ampm_str, font=f_sec)
+            a_top = a_bbox[1]
+            a_h = a_bbox[3] - a_bbox[1]
             ampm_w = (a_bbox[2] - a_bbox[0]) + int(6 * s)
 
-        pad_x = int(20 * s)
         total_time_w = t_w + ampm_w
         if align == "center":
             tx = (w - total_time_w) // 2
@@ -1219,23 +1575,25 @@ class ClockWidget(BaseDesktopWidget):
             tx = pad_x
             dx = pad_x
 
-        gap_td = max(int(4 * s), int(10 * s * sp))
-        block_h = t_h + gap_td + d_h + int(8 * s)
-        ty = max(int(8 * s), (h - block_h) // 2)
-        dy = ty + t_h + gap_td
+        gap_td = max(int(10 * s), int(18 * s * sp))
+        gap_bar = max(int(8 * s), int(12 * s * sp))
+        has_bar = style in ("moderno", "neon")
+        block_h = t_h + gap_td + d_h + (gap_bar + max(2, int(2.5 * s)) if has_bar else 0)
+        vis_ty = max(int(10 * s), (h - block_h) // 2)
+        vis_dy = vis_ty + t_h + gap_td
 
         if style == "neon":
-            draw.text((tx + 1, ty + 1), time_str, fill=(56, 189, 248, 120), font=f_time)
-        draw.text((tx, ty), time_str, fill=(*time_rgb, 255), font=f_time)
+            draw.text((tx - t_left + 1, vis_ty - t_top + 1), time_str, fill=(56, 189, 248, 120), font=f_time)
+        draw.text((tx - t_left, vis_ty - t_top), time_str, fill=(*time_rgb, 255), font=f_time)
 
         if ampm_str:
             ampm_rgb = (56, 189, 248) if style == "neon" else date_rgb
-            draw.text((tx + t_w + int(6 * s), ty + max(4, t_h - int(18 * s))), ampm_str, fill=(*ampm_rgb, 240), font=f_sec)
+            draw.text((tx + t_w + int(6 * s), vis_ty + t_h - a_h - a_top), ampm_str, fill=(*ampm_rgb, 240), font=f_sec)
 
-        draw.text((dx, dy), date_str, fill=(*date_rgb, 255), font=f_date)
+        draw.text((dx - d_left, vis_dy - d_top), date_str, fill=(*date_rgb, 255), font=f_date)
 
         bar_w = int(50 * s)
-        bar_y = min(h - int(7 * s), dy + d_h + max(int(6 * s), int(10 * s * sp)))
+        bar_y = min(h - int(7 * s), vis_dy + d_h + gap_bar)
         if align == "center":
             bx = (w - bar_w) // 2
         elif align == "right":
@@ -1248,7 +1606,7 @@ class ClockWidget(BaseDesktopWidget):
         elif style == "neon":
             draw.line([(bx, bar_y), (bx + bar_w, bar_y)], fill=(34, 211, 238, 245), width=max(2, int(2.5 * s)))
         elif style == "clasico":
-            div_y = ty + t_h + max(2, gap_td // 2)
+            div_y = vis_ty + t_h + max(4, gap_td // 2)
             alpha_line(composite, [(pad_x, div_y), (w - pad_x, div_y)], fill=(212, 175, 55, 140), width=1)
 
         self._render_to_canvas(composite, w, h)
@@ -1414,6 +1772,11 @@ class TodoListWidget(BaseDesktopWidget):
         self._drag_task_target_slot = None
         self._visible_row_spans = []
 
+    def _max_h(self):
+        _mx1, my1, _mx2, my2, _wx1, wy1, _wx2, _wy2 = self._get_screen_and_work_bounds()
+        top_limit = wy1 if wy1 > my1 else my1
+        return max(720, int(my2 - top_limit))
+
     def show(self):
         self._ensure_notebooks()
         super().show()
@@ -1425,16 +1788,17 @@ class TodoListWidget(BaseDesktopWidget):
             self.canvas.bind("<Leave>", self._on_leave, add="+")
             self.canvas.bind("<MouseWheel>", self._on_mousewheel)
 
-    def hide(self):
+    def hide(self, animate=True):
         self._hide_task_tooltip()
         self._close_modal()
-        super().hide()
+        super().hide(animate=animate)
 
     def _close_modal(self):
         if self._active_modal is not None:
             try:
                 if self._active_modal.winfo_exists():
-                    self._active_modal.destroy()
+                    modal = self._active_modal
+                    animate_window(modal, showing=False, on_done=modal.destroy)
             except Exception:
                 pass
             self._active_modal = None
@@ -1466,17 +1830,11 @@ class TodoListWidget(BaseDesktopWidget):
         notebooks[0].setdefault("tasks", [])
         return notebooks, notebooks[0]
 
-    def _save_notebooks(self, notebooks, active_id=None):
-        if not notebooks:
-            notebooks = [{"id": "nb_general", "name": "General", "color": "#3b82f6", "tasks": []}]
-        if active_id is None:
-            active_id = self.get_cfg("active_notebook_id", notebooks[0]["id"])
-        if not any(nb.get("id") == active_id for nb in notebooks):
-            active_id = notebooks[0]["id"]
-        active_tasks = next((nb.get("tasks", []) for nb in notebooks if nb.get("id") == active_id), [])
-        self.config_mgr.data.setdefault("widgets", {}).setdefault(self.widget_id, {})["tasks"] = active_tasks
-        self.config_mgr.data["widgets"][self.widget_id]["active_notebook_id"] = active_id
-        self.set_cfg("notebooks", notebooks)
+    def _save_notebooks(self, notebooks, active_id=None, baseline=None):
+        if baseline is None:
+            baseline = self.config_mgr._baseline.get('widgets', {}).get(self.widget_id, {}).get('notebooks', [])
+        todo_store.commit_notebooks(notebooks, baseline, active_id, self.config_mgr.config_path)
+        self.config_mgr.load()
 
     def _start_update_loop(self):
         self._render()
@@ -1927,6 +2285,8 @@ class TodoListWidget(BaseDesktopWidget):
     def _open_new_task_modal(self, default_nb_id=None, edit_task=None, edit_nb_id=None):
         self._close_modal()
         notebooks, active_nb = self._get_active_notebook()
+        baseline = copy.deepcopy(notebooks)
+        notebooks = copy.deepcopy(notebooks)
         is_edit = edit_task is not None
         sel_nb_id = [edit_nb_id or default_nb_id or active_nb["id"]]
         sel_tag = [(edit_task.get("tag") or "") if is_edit else ""]
@@ -2206,7 +2566,7 @@ class TodoListWidget(BaseDesktopWidget):
                             "tag_color": tag_color,
                         })
                         break
-            self._save_notebooks(notebooks, active_id=target_nb_id)
+            self._save_notebooks(notebooks, active_id=target_nb_id, baseline=baseline)
             self._close_modal()
             self._render()
             return "break"
@@ -2301,17 +2661,51 @@ class TodoListWidget(BaseDesktopWidget):
         text_box.bind("<Return>", _on_text_return)
         modal.bind("<Escape>", lambda _e: self._close_modal())
         _apply_win11_rounded_modal(modal)
+        animate_window(modal)
         modal.after(30, lambda: (modal.focus_force(), text_box.focus_set(), text_box.mark_set(tk.INSERT, tk.END)))
+
+    @staticmethod
+    def _make_trash_btn(parent, command, parent_bg="#171f30"):
+        """Creates a crisp rounded-corner vector trash-can icon button using 4x supersampled PIL rendering."""
+        bw, bh = 30, 28
+        sc = 4
+        c = tk.Canvas(parent, width=bw, height=bh, bg=parent_bg, highlightthickness=0, bd=0, cursor="hand2")
+
+        def _render_state(bg_rgba, out_rgba, ico_rgba):
+            im = Image.new("RGBA", (bw * sc, bh * sc), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im, "RGBA")
+            d.rounded_rectangle([2, 2, bw * sc - 3, bh * sc - 3], radius=8 * sc, fill=bg_rgba, outline=out_rgba, width=sc)
+            # Clean modern trash-can icon (handle + lid + bin + two vertical ribs)
+            cx = (bw * sc) / 2.0
+            cy = (bh * sc) / 2.0
+            d.rounded_rectangle([cx - 12, cy - 30, cx + 12, cy - 18], radius=5, outline=ico_rgba, width=5)
+            d.rounded_rectangle([cx - 28, cy - 20, cx + 28, cy - 12], radius=4, fill=ico_rgba)
+            d.rounded_rectangle([cx - 22, cy - 10, cx + 22, cy + 30], radius=10, outline=ico_rgba, width=5)
+            d.line([(cx - 8, cy - 1), (cx - 8, cy + 21)], fill=ico_rgba, width=5)
+            d.line([(cx + 8, cy - 1), (cx + 8, cy + 21)], fill=ico_rgba, width=5)
+            im = im.resize((bw, bh), Image.LANCZOS)
+            return ImageTk.PhotoImage(im)
+
+        ph_norm = _render_state((46, 27, 38, 255), (96, 44, 60, 255), (248, 113, 113, 255))
+        ph_hov = _render_state((239, 68, 68, 255), (252, 165, 165, 255), (255, 255, 255, 255))
+        c._trash_imgs = (ph_norm, ph_hov)
+        img_item = c.create_image(0, 0, anchor=tk.NW, image=ph_norm)
+
+        c.bind("<Enter>", lambda _e: c.itemconfig(img_item, image=ph_hov))
+        c.bind("<Leave>", lambda _e: c.itemconfig(img_item, image=ph_norm))
+        c.bind("<ButtonRelease-1>", lambda e: command() if (0 <= e.x <= bw and 0 <= e.y <= bh and callable(command)) else None)
+        return c
 
     def _open_notebooks_modal(self, focus_new=False):
         self._close_modal()
         notebooks_orig, active_id = self._ensure_notebooks()
+        baseline = copy.deepcopy(notebooks_orig)
         working = [
             {
                 "id": nb.get("id") or f"nb_{uuid.uuid4().hex[:6]}",
-                "name": nb.get("name", "Cuaderno"),
+                "name": nb.get("name", "Pestaña"),
                 "color": nb.get("color", "#3b82f6"),
-                "tasks": list(nb.get("tasks", [])),
+                "tasks": copy.deepcopy(nb.get("tasks", [])),
             }
             for nb in notebooks_orig
         ]
@@ -2321,14 +2715,15 @@ class TodoListWidget(BaseDesktopWidget):
         modal.overrideredirect(True)
         modal.attributes("-topmost", True)
         modal.configure(bg="#243044")
-        mw, mh = 450, 395
+        mw = 470
+        mh = max(410, min(650, 238 + max(1, min(7, len(working))) * 48))
         self._position_modal(modal, mw, mh)
 
         outer = tk.Frame(modal, bg="#111622", highlightthickness=1, highlightbackground="#2b3952")
         outer.pack(fill=tk.BOTH, expand=True)
 
-        hdr = tk.Frame(outer, bg="#151c2c", height=44)
-        hdr.pack(fill=tk.X)
+        hdr = tk.Frame(outer, bg="#151c2c", height=46)
+        hdr.pack(side=tk.TOP, fill=tk.X)
         hdr.pack_propagate(False)
 
         drag_state = {"x": 0, "y": 0}
@@ -2342,25 +2737,37 @@ class TodoListWidget(BaseDesktopWidget):
         hdr.bind("<Button-1>", _start_m)
         hdr.bind("<B1-Motion>", _move_m)
 
-        tk.Label(hdr, text="⚙  Configurar Cuadernos / Pestañas", fg="#f8fafc", bg="#151c2c", font=("Segoe UI", 11, "bold")).pack(side=tk.LEFT, padx=16)
-        tk.Button(
-            hdr, text="✕", command=self._close_modal,
-            bg="#151c2c", fg="#94a3b8", activebackground="#ef4444", activeforeground="#ffffff",
-            bd=0, relief=tk.FLAT, font=("Segoe UI", 10, "bold"), cursor="hand2", padx=12
-        ).pack(side=tk.RIGHT, fill=tk.Y)
+        hdr_lbl = tk.Label(hdr, text="⚙  Configuración de Pestañas", fg="#f8fafc", bg="#151c2c", font=("Segoe UI", 11, "bold"))
+        hdr_lbl.pack(side=tk.LEFT, padx=16)
+        hdr_lbl.bind("<Button-1>", _start_m)
+        hdr_lbl.bind("<B1-Motion>", _move_m)
+
+        close_btn = self._make_rounded_btn(
+            hdr, "×", self._close_modal,
+            bg="#1e293b", fg="#cbd5e1", hover_bg="#ef4444", border_col="#334155",
+            radius=9, pad_x=10, pad_y=3, font_spec=("Segoe UI", 11, "bold"), parent_bg="#151c2c"
+        )
+        close_btn.pack(side=tk.RIGHT, padx=(0, 12), pady=8)
+
+        # Pack footer before expanding body so footer buttons are never squished
+        foot = tk.Frame(outer, bg="#151c2c", padx=16, pady=12)
+        foot.pack(side=tk.BOTTOM, fill=tk.X)
 
         body = tk.Frame(outer, bg="#111622", padx=16, pady=12)
         body.pack(fill=tk.BOTH, expand=True)
 
         tk.Label(
             body,
-            text="Haz clic en el círculo de color para cambiar el tono de cada pestaña, renómbrala o reordénala:",
-            fg="#94a3b8", bg="#111622", font=("Segoe UI", 8), anchor="w"
+            text="Haz clic en el color para cambiar el tono, edita el nombre o arrastra una pestaña para reordenar:",
+            fg="#94a3b8", bg="#111622", font=("Segoe UI", 8), anchor="w",
+            wraplength=mw - 36, justify=tk.LEFT
         ).pack(fill=tk.X, pady=(0, 8))
 
         list_frame = tk.Frame(body, bg="#111622")
         list_frame.pack(fill=tk.BOTH, expand=True)
         row_vars = []
+        row_frames = []
+        drag_nb = {"active": False, "src": None, "slot": None, "start_y": 0, "moved": False, "bar": None}
 
         def _sync_vars_to_working():
             for idx_v, var in enumerate(row_vars):
@@ -2369,17 +2776,36 @@ class TodoListWidget(BaseDesktopWidget):
                     if nm:
                         working[idx_v]["name"] = nm[:22]
 
+        def _update_modal_height():
+            target_h = max(410, min(650, 238 + max(1, min(7, len(working))) * 48))
+            try:
+                if modal.winfo_exists():
+                    modal.geometry(f"{mw}x{target_h}")
+            except Exception:
+                pass
+
         def _rebuild_rows():
             for child in list_frame.winfo_children():
                 child.destroy()
             row_vars.clear()
+            row_frames.clear()
+            drag_nb["bar"] = tk.Frame(list_frame, bg="#38bdf8", height=3)
+
             for idx_nb, nb in enumerate(working[:7]):
-                r = tk.Frame(list_frame, bg="#171f30", highlightthickness=1, highlightbackground="#253148", padx=8, pady=5)
+                r = tk.Frame(list_frame, bg="#171f30", highlightthickness=1, highlightbackground="#253148", padx=8, pady=6)
                 r.pack(fill=tk.X, pady=3)
+                row_frames.append(r)
+
+                # 6-dot drag grip handle
+                grip_c = tk.Canvas(r, width=12, height=20, bg="#171f30", highlightthickness=0, bd=0, cursor="fleur")
+                grip_c.pack(side=tk.LEFT, padx=(0, 6))
+                for gx in (3, 8):
+                    for gy in (4, 10, 16):
+                        grip_c.create_oval(gx - 1, gy - 1, gx + 1, gy + 1, fill="#64748b", outline="")
 
                 col = nb.get("color", "#3b82f6")
                 c_btn = tk.Label(r, text="●", fg=col, bg="#171f30", font=("Segoe UI", 14, "bold"), cursor="hand2")
-                c_btn.pack(side=tk.LEFT, padx=(2, 8))
+                c_btn.pack(side=tk.LEFT, padx=(0, 8))
 
                 def _cycle_color(i=idx_nb):
                     _sync_vars_to_working()
@@ -2391,36 +2817,94 @@ class TodoListWidget(BaseDesktopWidget):
 
                 c_btn.bind("<Button-1>", lambda _e, i=idx_nb: _cycle_color(i))
 
-                sv = tk.StringVar(value=nb.get("name", "Cuaderno"))
+                sv = tk.StringVar(value=nb.get("name", "Pestaña"))
                 row_vars.append(sv)
-                ent = tk.Entry(r, textvariable=sv, bg="#0d121d", fg="#f8fafc", insertbackground="#60a5fa", bd=0, relief=tk.FLAT, font=("Segoe UI", 10))
-                ent.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3, padx=(0, 8))
+                ent = tk.Entry(
+                    r, textvariable=sv, width=14, bg="#0d121d", fg="#f8fafc",
+                    insertbackground="#60a5fa", bd=0, relief=tk.FLAT, font=("Segoe UI", 10)
+                )
+                ent.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=4, padx=(0, 8))
 
                 cnt_txt = f"{len(nb.get('tasks', []))} tareas"
-                tk.Label(r, text=cnt_txt, fg="#64748b", bg="#171f30", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 6))
+                cnt_lbl = tk.Label(r, text=cnt_txt, fg="#64748b", bg="#171f30", font=("Segoe UI", 8), cursor="fleur")
+                cnt_lbl.pack(side=tk.LEFT, padx=(0, 8))
 
-                if idx_nb > 0:
-                    tk.Button(
-                        r, text="↑", command=lambda i=idx_nb: (_sync_vars_to_working(), working.insert(i - 1, working.pop(i)), _rebuild_rows()),
-                        bg="#222d42", fg="#cbd5e1", bd=0, relief=tk.FLAT, font=("Segoe UI", 8, "bold"), width=2, cursor="hand2"
-                    ).pack(side=tk.LEFT, padx=1)
-                if idx_nb < len(working) - 1:
-                    tk.Button(
-                        r, text="↓", command=lambda i=idx_nb: (_sync_vars_to_working(), working.insert(i + 1, working.pop(i)), _rebuild_rows()),
-                        bg="#222d42", fg="#cbd5e1", bd=0, relief=tk.FLAT, font=("Segoe UI", 8, "bold"), width=2, cursor="hand2"
-                    ).pack(side=tk.LEFT, padx=1)
                 if len(working) > 1:
-                    tk.Button(
-                        r, text="🗑", command=lambda i=idx_nb: (_sync_vars_to_working(), working.pop(i), _rebuild_rows()),
-                        bg="#2b1d28", fg="#f87171", activebackground="#ef4444", activeforeground="#ffffff",
-                        bd=0, relief=tk.FLAT, font=("Segoe UI", 8), width=2, cursor="hand2"
-                    ).pack(side=tk.LEFT, padx=(4, 0))
+                    del_btn = self._make_trash_btn(
+                        r,
+                        command=lambda i=idx_nb: (_sync_vars_to_working(), working.pop(i), _rebuild_rows()),
+                        parent_bg="#171f30"
+                    )
+                    del_btn.pack(side=tk.LEFT, padx=(2, 0))
+
+                def _drag_press(e, i=idx_nb, row_w=r):
+                    if len(row_frames) <= 1:
+                        return
+                    drag_nb.update({"active": True, "src": i, "slot": i, "start_y": e.y_root, "moved": False})
+
+                def _drag_move(e, row_w=r):
+                    if not drag_nb["active"] or not row_frames:
+                        return
+                    if not drag_nb["moved"] and abs(e.y_root - drag_nb["start_y"]) >= 4:
+                        drag_nb["moved"] = True
+                        row_w.configure(bg="#1e293b", highlightbackground="#60a5fa", highlightthickness=2)
+                    if not drag_nb["moved"]:
+                        return
+                    slot = len(row_frames)
+                    for k, rf in enumerate(row_frames):
+                        mid_y = rf.winfo_rooty() + rf.winfo_height() / 2.0
+                        if e.y_root < mid_y:
+                            slot = k
+                            break
+                    drag_nb["slot"] = slot
+                    if slot <= 0:
+                        ind_y = max(0, row_frames[0].winfo_y() - 2)
+                    elif slot >= len(row_frames):
+                        last_rf = row_frames[-1]
+                        ind_y = last_rf.winfo_y() + last_rf.winfo_height() - 1
+                    else:
+                        prev_rf = row_frames[slot - 1]
+                        cur_rf = row_frames[slot]
+                        ind_y = (prev_rf.winfo_y() + prev_rf.winfo_height() + cur_rf.winfo_y()) // 2 - 1
+                    bar_w = drag_nb["bar"]
+                    if bar_w is not None:
+                        bar_w.place(x=2, y=ind_y, width=max(40, list_frame.winfo_width() - 4), height=3)
+                        bar_w.lift()
+
+                def _drag_release(_e, row_w=r):
+                    if not drag_nb["active"]:
+                        return
+                    src = drag_nb["src"]
+                    slot = drag_nb["slot"]
+                    moved = drag_nb["moved"]
+                    drag_nb.update({"active": False, "src": None, "slot": None, "moved": False})
+                    if drag_nb["bar"] is not None:
+                        drag_nb["bar"].place_forget()
+                    if moved and src is not None and slot is not None and slot not in (src, src + 1):
+                        _sync_vars_to_working()
+                        item = working.pop(src)
+                        ins = slot - 1 if src < slot else slot
+                        ins = max(0, min(len(working), ins))
+                        working.insert(ins, item)
+                        _rebuild_rows()
+                    else:
+                        try:
+                            row_w.configure(bg="#171f30", highlightbackground="#253148", highlightthickness=1)
+                        except Exception:
+                            pass
+
+                for dw in (grip_c, r, cnt_lbl):
+                    dw.bind("<ButtonPress-1>", _drag_press)
+                    dw.bind("<B1-Motion>", _drag_move)
+                    dw.bind("<ButtonRelease-1>", _drag_release)
+
+            _update_modal_height()
 
         _rebuild_rows()
 
         # Quick add new notebook bar
         add_bar = tk.Frame(body, bg="#0d121d", highlightthickness=1, highlightbackground="#293548", padx=8, pady=6)
-        add_bar.pack(fill=tk.X, pady=(8, 2))
+        add_bar.pack(fill=tk.X, pady=(10, 2))
         new_col_idx = [len(working) % len(self.NOTEBOOK_PALETTE)]
         new_dot = tk.Label(add_bar, text="●", fg=self.NOTEBOOK_PALETTE[new_col_idx[0]], bg="#0d121d", font=("Segoe UI", 13, "bold"), cursor="hand2")
         new_dot.pack(side=tk.LEFT, padx=(2, 6))
@@ -2449,35 +2933,38 @@ class TodoListWidget(BaseDesktopWidget):
             _rebuild_rows()
 
         new_nb_entry.bind("<Return>", _add_nb)
-        tk.Button(
-            add_bar, text="+ Crear Pestaña", command=_add_nb,
-            bg="#2563eb", fg="#ffffff", activebackground="#1d4ed8", activeforeground="#ffffff",
-            bd=0, relief=tk.FLAT, font=("Segoe UI", 8, "bold"), padx=10, pady=3, cursor="hand2"
-        ).pack(side=tk.RIGHT, padx=(6, 0))
-
-        foot = tk.Frame(outer, bg="#151c2c", padx=16, pady=10)
-        foot.pack(fill=tk.X, side=tk.BOTTOM)
+        add_nb_btn = self._make_rounded_btn(
+            add_bar, "+ Crear Pestaña", _add_nb,
+            bg="#2563eb", fg="#ffffff", hover_bg="#1d4ed8", border_col="#3b82f6",
+            radius=10, pad_x=12, pad_y=6, font_spec=("Segoe UI", 8, "bold"), parent_bg="#0d121d"
+        )
+        add_nb_btn.pack(side=tk.RIGHT, padx=(6, 0))
 
         def _save_all():
             _sync_vars_to_working()
             if new_nb_var.get().strip() and len(working) < 7:
                 _add_nb()
-            self._save_notebooks(working, active_id=active_id)
+            self._save_notebooks(working, active_id=active_id, baseline=baseline)
             self._close_modal()
             self._render()
 
-        tk.Button(
-            foot, text="Cancelar", command=self._close_modal,
-            bg="#222b3d", fg="#cbd5e1", bd=0, relief=tk.FLAT, font=("Segoe UI", 9, "bold"), padx=14, pady=6, cursor="hand2"
-        ).pack(side=tk.RIGHT, padx=(8, 0))
-        tk.Button(
-            foot, text="Guardar Cambios", command=_save_all,
-            bg="#10b981", fg="#ffffff", activebackground="#059669", activeforeground="#ffffff",
-            bd=0, relief=tk.FLAT, font=("Segoe UI", 9, "bold"), padx=16, pady=6, cursor="hand2"
-        ).pack(side=tk.RIGHT)
+        cancel_btn = self._make_rounded_btn(
+            foot, "Cancelar", self._close_modal,
+            bg="#222b3d", fg="#cbd5e1", hover_bg="#334155", border_col="#3b4963",
+            radius=13, pad_x=18, pad_y=11, font_spec=("Segoe UI", 9, "bold"), parent_bg="#151c2c"
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(10, 0))
+
+        save_btn = self._make_rounded_btn(
+            foot, "Guardar Cambios", _save_all,
+            bg="#10b981", fg="#ffffff", hover_bg="#059669", border_col="#34d399",
+            radius=13, pad_x=20, pad_y=11, font_spec=("Segoe UI", 9, "bold"), parent_bg="#151c2c"
+        )
+        save_btn.pack(side=tk.RIGHT)
 
         modal.bind("<Escape>", lambda _e: self._close_modal())
         _apply_win11_rounded_modal(modal)
+        animate_window(modal)
         if focus_new:
             modal.after(30, lambda: (modal.focus_force(), new_nb_entry.focus_set()))
         else:
@@ -2508,7 +2995,7 @@ class TodoListWidget(BaseDesktopWidget):
 
         menu.add_header(f"Cuaderno: {active_nb.get('name', 'Tareas')}")
         menu.add_command("+ Nueva Tarea...", self._open_new_task_modal)
-        menu.add_command("Configurar Pestañas / Cuadernos...", self._open_notebooks_modal)
+        menu.add_command("Configuración de Pestañas...", self._open_notebooks_modal)
         menu.add_command("Ver tareas completadas", lambda: (self.set_cfg("show_completed", not show_comp), self._render()), checked=show_comp)
         menu.add_command("Alargar automáticamente según lista", lambda: (self.set_cfg("auto_grow", not auto_gr), self._render()), checked=auto_gr)
         menu.add_command("Importar bandeja Outlook (todo_inbox.json)", self._manual_ingest_inbox)
@@ -2530,7 +3017,7 @@ class TodoListWidget(BaseDesktopWidget):
         try:
             import todo_store
             todo_store.ingest_todo_inbox()
-            self.config_mgr.data = self.config_mgr.load()
+            self.config_mgr.load()
             self._render()
         except Exception as e:
             print(f"[TodoWidget] Inbox ingest error: {e}")
@@ -2638,10 +3125,16 @@ class TodoListWidget(BaseDesktopWidget):
             rh = max(base_row_h, len(t_lines) * line_h + row_pad_v)
             pre_heights.append(rh)
 
-        # Auto-elongation (auto_grow) so the widget expands vertically with multi-line tasks up to max_auto_h, then scrolls
+        # Auto-elongation (auto_grow) so the widget expands vertically with multi-line tasks up to taskbar/screen bottom, then scrolls
         if not self.is_resizing and bool(self.get_cfg("auto_grow", True)):
-            sh = self.root.winfo_screenheight()
-            max_auto_h = min(sh - 96, int(float(self.get_cfg("max_auto_h", 540) or 540) * self.dpi_scale))
+            _mx1, my1, _mx2, my2, _wx1, wy1, _wx2, wy2 = self._get_screen_and_work_bounds()
+            cur_y = self.window.winfo_y() if (self.window and self.window.winfo_exists()) else int(self.get_cfg("y", self.default_y))
+            avail_work_h = max(int(220 * s), int(wy2 - max(wy1, cur_y) - 8))
+            cfg_max_auto = self.get_cfg("max_auto_h", None)
+            if cfg_max_auto is not None:
+                max_auto_h = min(avail_work_h, int(float(cfg_max_auto) * self.dpi_scale))
+            else:
+                max_auto_h = avail_work_h
             min_auto_h = max(int(130 * s), header_block_h + base_row_h + int(20 * s))
             desired_h = header_block_h + (sum(pre_heights) if pre_heights else base_row_h) + int(18 * s)
             h = max(min_auto_h, min(max_auto_h, desired_h))
@@ -3488,7 +3981,7 @@ class PwaWidget(BaseDesktopWidget):
         super().__init__(root, config_mgr, "pwa_apps", default_x=320, default_y=165, default_w=260, default_h=74, on_open_settings=on_open_settings)
         self.app_boxes = []
         self.hovered_app = -1
-        self._icon_cache = {}
+        self._icon_cache = OrderedDict()
 
     def show(self):
         # On first enable, if user hasn't customized beyond factory placeholder URLs, auto-populate detected PWAs if any
@@ -3598,18 +4091,23 @@ class PwaWidget(BaseDesktopWidget):
             self.set_cfg("y", y)
             self._apply_z_order()
 
-    def _get_pwa_icon(self, app):
-        key = app.get("id") or app.get("name", "")
+    def _get_pwa_icon(self, app, size=64):
+        src = app.get('icon_src') or app.get('icon_path') or ''
+        mtime = os.stat(src).st_mtime_ns if src and os.path.isfile(src) else 0
+        key = (app.get('id'), src, mtime, app.get('target'), app.get('args'), size)
         if key in self._icon_cache:
+            self._icon_cache.move_to_end(key)
             return self._icon_cache[key]
-        src = app.get("icon_src") or app.get("icon_path") or ""
         target = app.get("target") or ""
         args = app.get("args") or ""
         ic = None
         if src and (src.lower().startswith("shell:") or os.path.exists(src)):
             try:
                 if src.lower().endswith((".png", ".ico")) and os.path.exists(src):
-                    ic = Image.open(src).convert("RGBA")
+                    with Image.open(src) as raw:
+                        if raw.mode in ("P", "1"):
+                            raw = raw.convert("RGBA")
+                        ic = raw.resize((size, size), Image.Resampling.LANCZOS).convert("RGBA")
                 else:
                     import icon_extractor
                     ic = icon_extractor.get_or_create_icon({
@@ -3633,6 +4131,10 @@ class PwaWidget(BaseDesktopWidget):
                 }, size=64)
             except Exception:
                 ic = None
+        if ic is not None and ic.size != (size, size):
+            ic = ic.resize((size, size), Image.Resampling.LANCZOS)
+        while len(self._icon_cache) >= 32:
+            self._icon_cache.popitem(last=False)
         self._icon_cache[key] = ic
         return ic
 
@@ -3693,11 +4195,10 @@ class PwaWidget(BaseDesktopWidget):
             if self.hovered_app == i:
                 alpha_rounded_rect(composite, [bx1 - 3, by1 - 3, bx2 + 3, by2 + 3], radius=int(11 * s), fill=(59, 130, 246, 90), outline=(96, 165, 250, 215), width=1)
 
-            ic = self._get_pwa_icon(app)
+            ic_sz = max(20, app_w - int(4 * s))
+            ic = self._get_pwa_icon(app, ic_sz)
             if ic is not None:
-                ic_sz = max(20, app_w - int(4 * s))
-                resized = ic.resize((ic_sz, ic_sz), Image.Resampling.LANCZOS)
-                composite.alpha_composite(resized, (bx1 + (app_w - ic_sz) // 2, by1 + (app_w - ic_sz) // 2))
+                composite.alpha_composite(ic, (bx1 + (app_w - ic_sz) // 2, by1 + (app_w - ic_sz) // 2))
             else:
                 draw.rounded_rectangle([bx1 + 2, by1 + 2, bx2 - 2, by2 - 2], radius=int(9 * s), fill=(30, 41, 59, 240), outline=(255, 255, 255, 40), width=1)
                 name = app.get("name", "PWA")
@@ -3777,10 +4278,24 @@ class DesktopMiniDockWidget(BaseDesktopWidget):
         try:
             if act_id == "show_desktop":
                 try:
+                    import pythoncom
                     import win32com.client
+                    try:
+                        pythoncom.CoInitialize()
+                    except Exception:
+                        pass
                     win32com.client.Dispatch("Shell.Application").ToggleDesktop()
                 except Exception:
-                    subprocess.Popen(["powershell", "-WindowStyle", "Hidden", "-Command", "(New-Object -ComObject Shell.Application).ToggleDesktop()"])
+                    try:
+                        VK_LWIN = 0x5B
+                        VK_D = 0x44
+                        KEYEVENTF_KEYUP = 0x0002
+                        ctypes.windll.user32.keybd_event(VK_LWIN, 0, 0, 0)
+                        ctypes.windll.user32.keybd_event(VK_D, 0, 0, 0)
+                        ctypes.windll.user32.keybd_event(VK_D, 0, KEYEVENTF_KEYUP, 0)
+                        ctypes.windll.user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
+                    except Exception:
+                        pass
             elif act_id == "lock_pc":
                 ctypes.windll.user32.LockWorkStation()
             elif act_id == "taskmgr":
@@ -4396,6 +4911,7 @@ class DesktopWidgetManager:
             "pwa_apps": PwaWidget(root, config_mgr, on_open_settings=on_open_settings)
         }
         self.start()
+        self._last_configs = copy.deepcopy(self.config_mgr.data.get("widgets", {}))
 
     def start(self):
         for w_id, widget in self.widgets.items():
@@ -4440,9 +4956,14 @@ class DesktopWidgetManager:
     def live_update(self):
         """Called whenever settings change in real-time."""
         for w_id, widget in self.widgets.items():
+            current = self.config_mgr.data.get("widgets", {}).get(w_id, {})
+            previous = self._last_configs.get(w_id)
+            if current == previous and not getattr(widget, "_hiding", False) and widget.window and widget.window.winfo_exists():
+                continue
+            self._last_configs[w_id] = copy.deepcopy(current)
             enabled = widget.is_enabled()
             if enabled:
-                if not widget.window or not widget.window.winfo_exists():
+                if not widget.window or not widget.window.winfo_exists() or getattr(widget, "_hiding", False):
                     widget.show()
                 else:
                     widget._last_z_state = None
@@ -4455,6 +4976,6 @@ class DesktopWidgetManager:
     def close(self):
         for widget in self.widgets.values():
             try:
-                widget.hide()
+                widget.hide(animate=False)
             except Exception:
                 pass

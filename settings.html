@@ -8,15 +8,17 @@
   <link rel="icon" type="image/png" href="/assets/logo.png">
   <style>
     :root {
-      --bg: #0b0d12;
-      --surface: #11151f;
-      --card-bg: rgba(22, 26, 35, 0.82);
-      --card-border: rgba(255, 255, 255, 0.08);
+      --bg: #080a0f;
+      --surface: #121724;
+      --card-bg: rgba(25, 32, 47, 0.92);
+      --card-bg-hover: rgba(31, 40, 58, 0.96);
+      --card-bg-expanded: rgba(29, 38, 56, 0.98);
+      --card-border: rgba(148, 163, 184, 0.22);
       --accent: #3b82f6;
-      --accent-soft: rgba(59, 130, 246, 0.14);
+      --accent-soft: rgba(59, 130, 246, 0.16);
       --accent-hover: #2563eb;
-      --text: #f1f5f9;
-      --text-muted: #94a3b8;
+      --text: #f8fafc;
+      --text-muted: #a6b4c8;
       --danger: #ef4444;
       --success: #10b981;
     }
@@ -220,18 +222,18 @@
       border: 1px solid var(--card-border);
       border-radius: 14px;
       padding: 18px 22px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
     .card-title {
       font-size: 14px;
       font-weight: 700;
-      color: #e2e8f0;
+      color: #f8fafc;
       margin-bottom: 12px;
       display: flex;
       align-items: center;
       gap: 9px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
       padding-bottom: 10px;
     }
 
@@ -240,7 +242,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 10px 0;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.10);
       gap: 16px;
     }
 
@@ -980,12 +982,15 @@
     }
 
     .card.collapsible {
-      padding: 14px 20px;
-      transition: border-color 0.2s ease, background 0.2s ease;
+      padding: 15px 20px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
     }
 
     .card.collapsible:hover {
-      border-color: rgba(96, 165, 250, 0.28);
+      background: var(--card-bg-hover);
+      border-color: rgba(96, 165, 250, 0.42);
     }
 
     .card.collapsible > .card-title {
@@ -999,12 +1004,20 @@
 
     .card.collapsible.expanded {
       padding: 18px 22px;
+      background: var(--card-bg-expanded);
+      border-color: rgba(96, 165, 250, 0.44);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    }
+
+    .card.collapsible.pinned {
+      border-color: rgba(96, 165, 250, 0.65);
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(59, 130, 246, 0.22);
     }
 
     .card.collapsible.expanded > .card-title {
       margin-bottom: 12px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 11px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
     }
 
     .card.collapsible > .card-body {
@@ -1013,6 +1026,23 @@
 
     .card.collapsible.expanded > .card-body {
       display: block;
+    }
+
+    .card-pin-ind {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: #93c5fd;
+      background: rgba(59, 130, 246, 0.16);
+      border: 1px solid rgba(96, 165, 250, 0.35);
+      padding: 2px 8px;
+      border-radius: 99px;
+    }
+
+    .card.collapsible.pinned .card-pin-ind {
+      display: inline-flex;
     }
 
     .card-head-left {
@@ -1132,9 +1162,11 @@
     }
 
     .widget-typo-section {
-      margin-top: 8px;
-      padding-top: 10px;
-      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: rgba(12, 17, 29, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      border-radius: 12px;
     }
 
     .widget-typo-heading {
@@ -1174,6 +1206,10 @@
       justify-content: space-between;
       z-index: 20;
     }
+  @keyframes panel-enter { from { opacity: 0; transform: translateY(7px) scale(.99); } to { opacity: 1; transform: none; } }
+    body { animation: panel-enter 160ms ease-out; }
+    body.panel-closing { opacity: 0; transform: translateY(5px) scale(.99); transition: opacity 120ms ease, transform 120ms ease; }
+    @media (prefers-reduced-motion: reduce) { body { animation: none; } body.panel-closing { transition: none; } }
   </style>
 </head>
 <body>
@@ -1272,12 +1308,23 @@
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Mostrar Programas Abiertos en la Dockbar</span>
-                <span class="setting-desc">Muestra a la derecha las apps abiertas (incluyendo PWAs y apps dentro de carpetas)</span>
+                <span class="setting-desc">Muestra las apps y carpetas abiertas (incluyendo PWAs y apps dentro de carpetas)</span>
               </div>
               <label class="switch">
                 <input type="checkbox" id="show_open_windows" onchange="updateSetting('general', 'show_open_windows', this.checked)">
                 <span class="slider"></span>
               </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Posición de Apps / Carpetas Abiertas</span>
+                <span class="setting-desc">Coloca las ventanas abiertas a la izquierda, en medio o a la derecha de la Dockbar</span>
+              </div>
+              <div class="radio-group" id="open-win-pos-group">
+                <div class="radio-option" data-owpos="left" onclick="setOpenWinPos('left')">Izquierda</div>
+                <div class="radio-option" data-owpos="center" onclick="setOpenWinPos('center')">En Medio</div>
+                <div class="radio-option" data-owpos="right" onclick="setOpenWinPos('right')">Derecha</div>
+              </div>
             </div>
             <div class="setting-row">
               <div class="setting-info">
@@ -1342,7 +1389,7 @@
         <div class="card collapsible">
           <div class="card-title">
             <span class="card-head-left">
-              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="1.1"/><circle cx="17.5" cy="10.5" r="1.1"/><circle cx="8.5" cy="7.5" r="1.1"/><circle cx="6.5" cy="12.5" r="1.1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
               Temas Visuales y Perfiles Guardados
             </span>
             <span class="card-head-right">
@@ -1833,12 +1880,12 @@
       <!-- TAB 4: WIDGETS DE ESCRITORIO -->
       <div id="tab-widgets" class="tab-content">
         <div class="widget-toolbar">
-          <span style="font-size:12px; color:var(--text-muted);">Pasa el cursor sobre cualquier apartado para expandirlo. Para redimensionar un widget, arrastra cualquiera de sus 8 puntos directamente en el escritorio.</span>
+          <span style="font-size:12px; color:var(--text-muted);">Pasa el cursor sobre cualquier sección para previsualizarla o haz clic en cualquier parte dentro de ella para dejarla desplegada. Para redimensionar un widget, arrastra sus 8 puntos en el escritorio.</span>
         </div>
 
         <!-- 0. CÁPSULA MULTIMEDIA SOBRE DOCKBAR -->
         <div class="card collapsible" data-wcard="media_capsule">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
               Cápsula de Reproductor Multimedia (Sobre la Dockbar)
@@ -1855,9 +1902,39 @@
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Control Automático del Reproductor Activo</span>
-                <span class="setting-desc">Muestra título y artista en vivo sobre una cápsula centrada encima del Dock (Spotify, YouTube, Edge, Chrome, VLC) con botones Anterior / Play-Pausa / Siguiente</span>
+                <span class="setting-desc">Muestra título, artista, barra de avance interactiva, volumen y botón de cierre sobre el Dock (Spotify, YouTube, Edge, Chrome, VLC) con botones Anterior / Play-Pausa / Siguiente</span>
               </div>
-              <span style="font-size:11px; color:#93c5fd;">Integración WinRT SMTC</span>
+              <span style="font-size:11px; color:#93c5fd;">WinRT SMTC + WASAPI</span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Ocultar si no hay Reproducción Activa</span>
+                <span class="setting-desc">No abre la cápsula cuando no hay música o video en curso; aparece al iniciar reproducción</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="media_capsule_auto_hide_idle" checked onchange="updateSetting('general', 'media_capsule_auto_hide_idle', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mantener Audio si la App Pierde el Foco</span>
+                <span class="setting-desc">Reanuda automáticamente reproductores que se pausan al cambiar de ventana</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="media_capsule_keep_audio_on_blur" checked onchange="updateSetting('general', 'media_capsule_keep_audio_on_blur', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Botones de Reproducción</span>
+                <span class="setting-desc">Escala independiente para Anterior, Play/Pausa y Siguiente</span>
+              </div>
+              <div class="slider-container">
+                <input type="range" id="media_capsule_btn_scale" min="0.65" max="1.60" step="0.05" value="1.0" oninput="updateSetting('general', 'media_capsule_btn_scale', parseFloat(this.value)); updateLabel('lbl-mc-bscale', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-mc-bscale">100%</span>
+              </div>
             </div>
             <div class="setting-row">
               <div class="setting-info">
@@ -1883,6 +1960,20 @@
                 <div class="radio-option" data-bpos="left" onclick="setCapsuleBtnPos('left')">Izquierda</div>
                 <div class="radio-option" data-bpos="center" onclick="setCapsuleBtnPos('center')">Centro Abajo</div>
                 <div class="radio-option" data-bpos="split" onclick="setCapsuleBtnPos('split')">Divididos</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Estilo de Botones de Reproducción</span>
+                <span class="setting-desc">Cambia el diseño visual de Anterior, Play/Pausa y Siguiente</span>
+              </div>
+              <div class="radio-group" id="capsule-btnstyle-group" style="flex-wrap:wrap;">
+                <div class="radio-option" data-bstyle="clasico" onclick="setCapsuleBtnStyle('clasico')">Clásico</div>
+                <div class="radio-option" data-bstyle="outline" onclick="setCapsuleBtnStyle('outline')">Outlinear</div>
+                <div class="radio-option" data-bstyle="vidrio" onclick="setCapsuleBtnStyle('vidrio')">Cristal</div>
+                <div class="radio-option" data-bstyle="cuadrado" onclick="setCapsuleBtnStyle('cuadrado')">Cuadrado</div>
+                <div class="radio-option" data-bstyle="neon" onclick="setCapsuleBtnStyle('neon')">Neón</div>
+                <div class="radio-option" data-bstyle="minimal" onclick="setCapsuleBtnStyle('minimal')">Minimal</div>
               </div>
             </div>
             <div class="setting-row">
@@ -1960,7 +2051,7 @@
 
         <!-- 0b. BATERÍA EN DOCKBAR Y ESCRITORIO -->
         <div class="card collapsible" data-wcard="battery">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="1" y="6" width="18" height="12" rx="2"/><line x1="23" y1="13" x2="23" y2="11"/><path d="M6 12h6"/></svg>
               Widget de Batería (Escritorio y Dockbar)
@@ -2035,15 +2126,15 @@
           </div>
         </div>
 
-        <!-- 1. RELOJ -->
+        <!-- 1A. RELOJ EN ESCRITORIO -->
         <div class="card collapsible" data-wcard="clock">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              Widget de Reloj y Fecha Digital
+              Widget de Reloj en Escritorio
             </span>
             <span class="card-head-right">
-              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Reloj">
+              <label class="switch" onclick="event.stopPropagation()" title="Activar / Desactivar Reloj en Escritorio">
                 <input type="checkbox" id="w_clock_enabled" onchange="updateWidget('clock', {enabled: this.checked})">
                 <span class="slider"></span>
               </label>
@@ -2051,42 +2142,7 @@
             </span>
           </div>
           <div class="card-body">
-            <div class="setting-row">
-              <div class="setting-info">
-                <span class="setting-label">Widget de Reloj en la Dockbar</span>
-                <span class="setting-desc">Inserta un reloj en vivo dentro de la barra con estilo digital, analógico, neón o píldora</span>
-              </div>
-              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                <select class="select-input" id="dock_clock_style" onchange="updateSetting('appearance', 'dock_clock_style', this.value)">
-                  <option value="wide_5_3">Horizontal 5:3 (Grande)</option>
-                  <option value="digital">Digital Cristal (1:1)</option>
-                  <option value="analog">Analógico</option>
-                  <option value="neon">Neón</option>
-                  <option value="minimal">Minimalista</option>
-                  <option value="pill">Píldora Azul</option>
-                </select>
-                <button type="button" class="btn btn-primary" onclick="addClockToDockbar()">Añadir a la Dockbar</button>
-              </div>
-            </div>
-            <div class="setting-row">
-              <div class="setting-info">
-                <span class="setting-label">Opciones del Reloj en Dockbar</span>
-                <span class="setting-desc">Formato 24h, segundero, fecha y color del texto/manecillas</span>
-              </div>
-              <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
-                <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;">
-                  <input type="checkbox" id="dock_clock_24h" checked onchange="updateSetting('appearance', 'dock_clock_24h', this.checked)"> 24h
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;">
-                  <input type="checkbox" id="dock_clock_seconds" onchange="updateSetting('appearance', 'dock_clock_seconds', this.checked)"> Segundos
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer;">
-                  <input type="checkbox" id="dock_clock_show_date" checked onchange="updateSetting('appearance', 'dock_clock_show_date', this.checked)"> Fecha
-                </label>
-                <input type="color" id="dock_clock_color_input" style="opacity:0; width:0; height:0;" onchange="updateColorPair('dock_clock_color', 'dock-clock-col-swatch', this.value)">
-                <div class="color-swatch" id="dock-clock-col-swatch" title="Color del reloj en Dockbar" onclick="document.getElementById('dock_clock_color_input').click()"></div>
-              </div>
-            </div>
+            <div class="widget-typo-heading" style="margin-top:2px;">Tamaño y Proporción del Reloj</div>
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Tamaño del Widget</span>
@@ -2096,12 +2152,44 @@
             </div>
             <div class="setting-row">
               <div class="setting-info">
+                <span class="setting-label">Proporción del Widget</span>
+                <span class="setting-desc">Relación de aspecto independiente del estilo</span>
+              </div>
+              <div class="radio-group" id="w_clock_aspect_group" style="flex-wrap:wrap;">
+                <div class="radio-option selected" data-cap="auto" onclick="setClockAspect('auto')">Auto</div>
+                <div class="radio-option" data-cap="wide" onclick="setClockAspect('wide')">Horizontal 3:1</div>
+                <div class="radio-option" data-cap="card" onclick="setClockAspect('card')">Tarjeta 4:3</div>
+                <div class="radio-option" data-cap="square" onclick="setClockAspect('square')">Cuadrada 1:1</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
                 <span class="setting-label">Opacidad del Cristal</span>
                 <span class="setting-desc">Transparencia independiente del fondo</span>
               </div>
               <div class="slider-container">
                 <input type="range" id="w_clock_op" min="0.2" max="1.0" step="0.02" value="0.88" oninput="updateWidget('clock', {opacity: parseFloat(this.value)}); updateLabel('lbl-w-clock-op', Math.round(this.value*100)+'%')">
                 <span class="slider-val" id="lbl-w-clock-op">88%</span>
+              </div>
+            </div>
+
+            <div class="widget-typo-heading" style="margin-top:8px;">Estilos Visuales (Digital y Analógico)</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Estilo Visual del Reloj</span>
+                <span class="setting-desc">Relojes digitales, analógicos de agujas, flip retro o estudio</span>
+              </div>
+              <div class="radio-group" id="w_clock_style_group" style="max-width:480px; flex-wrap:wrap;">
+                <div class="radio-option selected" data-cstyle="moderno" onclick="setClockStyle('moderno')">Moderno</div>
+                <div class="radio-option" data-cstyle="minimal" onclick="setClockStyle('minimal')">Minimal</div>
+                <div class="radio-option" data-cstyle="neon" onclick="setClockStyle('neon')">Neón</div>
+                <div class="radio-option" data-cstyle="clasico" onclick="setClockStyle('clasico')">Clásico</div>
+                <div class="radio-option" data-cstyle="flip" onclick="setClockStyle('flip')">Flip Retro</div>
+                <div class="radio-option" data-cstyle="led" onclick="setClockStyle('led')">LED Estudio</div>
+                <div class="radio-option" data-cstyle="analogico" onclick="setClockStyle('analogico')">Analógico Cristal</div>
+                <div class="radio-option" data-cstyle="analogico_suizo" onclick="setClockStyle('analogico_suizo')">Analógico Suizo</div>
+                <div class="radio-option" data-cstyle="analogico_clasico" onclick="setClockStyle('analogico_clasico')">Cronógrafo</div>
+                <div class="radio-option" data-cstyle="analogico_neon" onclick="setClockStyle('analogico_neon')">Analógico Neón</div>
               </div>
             </div>
             <div class="setting-row">
@@ -2123,18 +2211,6 @@
                 <input type="checkbox" id="w_clock_sec" onchange="updateWidget('clock', {show_seconds: this.checked})">
                 <span class="slider"></span>
               </label>
-            </div>
-            <div class="setting-row">
-              <div class="setting-info">
-                <span class="setting-label">Estilo Visual del Reloj</span>
-                <span class="setting-desc">Personaliza diseño base del reloj</span>
-              </div>
-              <div class="radio-group" id="w_clock_style_group">
-                <div class="radio-option selected" data-cstyle="moderno" onclick="setClockStyle('moderno')">Moderno</div>
-                <div class="radio-option" data-cstyle="minimal" onclick="setClockStyle('minimal')">Minimal</div>
-                <div class="radio-option" data-cstyle="neon" onclick="setClockStyle('neon')">Neón</div>
-                <div class="radio-option" data-cstyle="clasico" onclick="setClockStyle('clasico')">Clásico</div>
-              </div>
             </div>
             <div class="setting-row">
               <div class="setting-info">
@@ -2173,9 +2249,146 @@
           </div>
         </div>
 
+        <!-- 1B. RELOJ EN DOCKBAR (SEPARADO DEL WIDGET DE ESCRITORIO) -->
+        <div class="card collapsible" data-wcard="dock_clock">
+          <div class="card-title">
+            <span class="card-head-left">
+              <svg class="ico ico-accent" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><circle cx="12" cy="12" r="4.5"/><polyline points="12 10 12 12 13.5 13"/></svg>
+              Widget de Reloj en la Dockbar
+            </span>
+            <span class="card-head-right">
+              <button type="button" class="btn btn-primary" style="padding:5px 11px; font-size:11.5px;" onclick="event.stopPropagation(); addClockToDockbar()">
+                <svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Añadir a la Dockbar
+              </button>
+              <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+            </span>
+          </div>
+          <div class="card-body">
+            <div class="widget-typo-heading" style="margin-top:2px;">Tamaño y Proporción en Dockbar</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Proporción del Reloj</span>
+                <span class="setting-desc">Combina cualquier proporción con cualquier estilo visual</span>
+              </div>
+              <div class="radio-group" id="dock_clock_aspect_group" style="flex-wrap:wrap;">
+                <div class="radio-option" data-dcap="1_1" onclick="setDockClockAspect('1_1')">Cuadrado 1:1</div>
+                <div class="radio-option" data-dcap="4_3" onclick="setDockClockAspect('4_3')">Compacto 4:3</div>
+                <div class="radio-option selected" data-dcap="5_3" onclick="setDockClockAspect('5_3')">Horizontal 5:3</div>
+                <div class="radio-option" data-dcap="2_1" onclick="setDockClockAspect('2_1')">Panorámico 2:1</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño / Escala del Reloj</span>
+                <span class="setting-desc">Ajusta el tamaño del reloj dentro de la Dockbar</span>
+              </div>
+              <div class="slider-container">
+                <input type="range" id="dock_clock_scale" min="0.75" max="1.35" step="0.05" value="1.0" oninput="updateSetting('appearance', 'dock_clock_scale', parseFloat(this.value)); updateLabel('lbl-dc-scale', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-dc-scale">100%</span>
+              </div>
+            </div>
+
+            <div class="widget-typo-heading" style="margin-top:8px;">Tipografía de Letras (Solo Texto)</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Fuente y Estilo de Letras (Dockbar)</span>
+                <span class="setting-desc">Cambia solo la tipografía, negrita o cursiva del reloj en la barra</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <select class="select-input" id="dock_clock_font_family" onchange="updateSetting('appearance', 'dock_clock_font_family', this.value)">
+                  <option value="Segoe UI">Segoe UI</option>
+                  <option value="Calibri">Calibri</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Consolas">Consolas</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Trebuchet MS">Trebuchet MS</option>
+                  <option value="Tahoma">Tahoma</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+                <button type="button" class="style-toggle-btn active" id="btn_dc_bold" onclick="toggleAppearanceFlag('dock_clock_font_bold', 'btn_dc_bold')"><b>B</b> Negrita</button>
+                <button type="button" class="style-toggle-btn" id="btn_dc_italic" onclick="toggleAppearanceFlag('dock_clock_font_italic', 'btn_dc_italic')"><i>I</i> Cursiva</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Letras (Solo Texto)</span>
+                <span class="setting-desc">Ajusta el tamaño de los dígitos y fecha sin cambiar el marco del reloj</span>
+              </div>
+              <div class="slider-container">
+                <input type="range" id="dock_clock_font_scale" min="0.60" max="1.60" step="0.05" value="1.0" oninput="updateSetting('appearance', 'dock_clock_font_scale', parseFloat(this.value)); updateLabel('lbl-dc-fscale', Math.round(this.value*100)+'%')">
+                <span class="slider-val" id="lbl-dc-fscale">100%</span>
+              </div>
+            </div>
+
+            <div class="widget-typo-heading" style="margin-top:8px;">Estilos Visuales en Dockbar (Digital y Analógico)</div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Estilo Visual del Reloj</span>
+                <span class="setting-desc">Relojes digitales, analógicos (con esfera en 1:1 o esfera+hora en formato ancho)</span>
+              </div>
+              <div class="radio-group" id="dock_clock_style_group" style="max-width:480px; flex-wrap:wrap;">
+                <div class="radio-option selected" data-dcstyle="cristal" onclick="setDockClockStyle('cristal')">Cristal</div>
+                <div class="radio-option" data-dcstyle="glass_split" onclick="setDockClockStyle('glass_split')">Doble Columna</div>
+                <div class="radio-option" data-dcstyle="flip" onclick="setDockClockStyle('flip')">Flip Retro</div>
+                <div class="radio-option" data-dcstyle="neon" onclick="setDockClockStyle('neon')">Neón</div>
+                <div class="radio-option" data-dcstyle="minimal" onclick="setDockClockStyle('minimal')">Minimal</div>
+                <div class="radio-option" data-dcstyle="pill" onclick="setDockClockStyle('pill')">Píldora</div>
+                <div class="radio-option" data-dcstyle="led" onclick="setDockClockStyle('led')">LED Estudio</div>
+                <div class="radio-option" data-dcstyle="analog" onclick="setDockClockStyle('analog')">Analógico Oscuro</div>
+                <div class="radio-option" data-dcstyle="analog_light" onclick="setDockClockStyle('analog_light')">Analógico Suizo</div>
+                <div class="radio-option" data-dcstyle="analog_gold" onclick="setDockClockStyle('analog_gold')">Analógico Dorado</div>
+                <div class="radio-option" data-dcstyle="analog_minimal" onclick="setDockClockStyle('analog_minimal')">Analógico Minimal</div>
+                <div class="radio-option" data-dcstyle="neon_ring" onclick="setDockClockStyle('neon_ring')">Anillo Neón</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Formato 24 Horas (Dockbar)</span>
+                <span class="setting-desc">Muestra la hora en formato 24h dentro del reloj del Dock</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="dock_clock_24h" checked onchange="updateSetting('appearance', 'dock_clock_24h', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mostrar Segundero (Dockbar)</span>
+                <span class="setting-desc">Incluye los segundos en el reloj integrado en la Dockbar</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="dock_clock_seconds" onchange="updateSetting('appearance', 'dock_clock_seconds', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Mostrar Fecha (Dockbar)</span>
+                <span class="setting-desc">Muestra el día y fecha debajo o junto a la hora en el Dock</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="dock_clock_show_date" checked onchange="updateSetting('appearance', 'dock_clock_show_date', this.checked)">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Color del Reloj en Dockbar</span>
+                <span class="setting-desc">Color del texto, dígitos o manecillas dentro de la barra</span>
+              </div>
+              <div class="color-btn-wrapper">
+                <input type="color" id="dock_clock_color_input" style="opacity:0; width:0; height:0;" onchange="updateColorPair('dock_clock_color', 'dock-clock-col-swatch', this.value)">
+                <div class="color-swatch" id="dock-clock-col-swatch" title="Color del reloj en Dockbar" onclick="document.getElementById('dock_clock_color_input').click()"></div>
+                <button type="button" class="btn" onclick="document.getElementById('dock_clock_color_input').click()">Elegir Color</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 2. TO-DO LIST (CUADERNOS) -->
         <div class="card collapsible" data-wcard="todo_list">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               Widget de Lista de Tareas (Cuadernos con Pestañas)
@@ -2202,7 +2415,7 @@
             <div class="setting-row">
               <div class="setting-info">
                 <span class="setting-label">Mostrar Vista de Tareas Completadas</span>
-                <span class="setting-desc">También puedes alternarla desde el botón "✓ Ver completados" directo en el widget</span>
+                <span class="setting-desc">También puedes alternarla desde el botón "Ver completados" directo en el widget</span>
               </div>
               <label class="switch">
                 <input type="checkbox" id="w_todo_showcomp" onchange="updateWidget('todo_list', {show_completed: this.checked})">
@@ -2233,7 +2446,7 @@
 
         <!-- 3. RENDIMIENTO -->
         <div class="card collapsible" data-wcard="system_monitor">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               Widget de Rendimiento (CPU, RAM y Disco)
@@ -2264,7 +2477,7 @@
 
         <!-- 4. QUICK ACCESS -->
         <div class="card collapsible" data-wcard="quick_access">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               Widget de Accesos Rápidos y Carpetas
@@ -2306,7 +2519,7 @@
 
         <!-- 5. PWAs -->
         <div class="card collapsible" data-wcard="pwa_apps">
-          <div class="card-title" onclick="toggleWidgetCard(this)">
+          <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
               Widget de Aplicaciones Web / PWA
@@ -2447,14 +2660,50 @@
 
   <footer>
     <span style="font-size:12px; color:var(--text-muted);">Alioth Dockbar • Edición Corporativa sin Permisos de Admin</span>
-    <button class="btn" onclick="window.close()">Cerrar Ventana</button>
+    <button class="btn" onclick="closeProjectPanel()">Cerrar Ventana</button>
   </footer>
 
   <script>
+    const nativeFetch = window.fetch.bind(window);
+    const sessionKey = new URLSearchParams(location.hash.slice(1)).get('session');
+    const sessionReady = sessionKey ? nativeFetch('/api/session', {
+      method: 'POST', headers: {'X-Alioth-Token': sessionKey}
+    }).then(r => { if (!r.ok) throw Error('No se pudo abrir la sesión local'); }) : Promise.resolve();
+    if (sessionKey) history.replaceState(null, '', location.pathname + location.search);
+    window.fetch = (input, options) => sessionReady.then(() => nativeFetch(input, options));
+    let panelClosing = false;
+    function closeProjectPanel() {
+      if (panelClosing) return;
+      panelClosing = true;
+      document.body.classList.add('panel-closing');
+      setTimeout(() => {
+        window.close();
+        setTimeout(() => {
+          if (!window.closed) {
+            document.body.classList.remove('panel-closing');
+            panelClosing = false;
+          }
+        }, 200);
+      }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 130);
+    }
+    let resizeMotion;
+    window.addEventListener('resize', () => {
+      if (document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      clearTimeout(resizeMotion);
+      resizeMotion = setTimeout(() => document.body.animate(
+        [{opacity: .88, transform: 'scale(.99)'}, {opacity: 1, transform: 'none'}],
+        {duration: 140, easing: 'ease-out'}), 80);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches)
+        document.body.animate([{opacity: .75}, {opacity: 1}], {duration: 150});
+    });
+
     let currentConfig = null;
     let iconPacksCache = null;
     let activePackIdx = -1;
     let editingItemIdx = null;
+    let iconModalRequest = 0;
     let editingChildIdx = null;
     let searchTimer = null;
 
@@ -2470,7 +2719,9 @@
       undo: '<svg class="ico ico-sm" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
       edit: '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
       ungroup: '<svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
-      out: '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>'
+      out: '<svg class="ico ico-sm" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>',
+      close: '<svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+      pin: '<svg class="ico" style="width:12px;height:12px;" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>'
     };
 
     const SYSTEM_ACTIONS = [
@@ -2657,31 +2908,53 @@
     let _hoverCardsInitialized = false;
 
     function toggleWidgetCard(titleEl) {
-      const card = titleEl.closest('.card.collapsible');
-      if (card) card.classList.toggle('expanded');
+      const card = titleEl && titleEl.closest ? titleEl.closest('.card.collapsible') : null;
+      if (!card) return;
+      if (card.classList.contains('pinned')) {
+        card.classList.remove('pinned', 'expanded');
+      } else {
+        card.classList.add('pinned', 'expanded');
+      }
     }
 
     function initHoverExpandCards() {
       if (_hoverCardsInitialized) return;
       _hoverCardsInitialized = true;
       document.querySelectorAll('.card.collapsible').forEach(card => {
-        card.classList.remove('expanded');
+        card.classList.remove('expanded', 'pinned');
+        const headRight = card.querySelector(':scope > .card-title .card-head-right');
+        if (headRight && !headRight.querySelector('.card-pin-ind')) {
+          const chev = headRight.querySelector('.collapse-chevron');
+          const badge = document.createElement('span');
+          badge.className = 'card-pin-ind';
+          badge.title = 'Sección fijada (clic en el encabezado para contraer)';
+          badge.innerHTML = `${SVG.pin}<span>Fijada</span>`;
+          if (chev) headRight.insertBefore(badge, chev);
+          else headRight.appendChild(badge);
+        }
+
         let closeTimer = null;
         const cancelClose = () => {
           if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
         };
+
         card.addEventListener('mouseenter', () => {
           cancelClose();
           card.classList.add('expanded');
         });
+
         card.addEventListener('mouseleave', () => {
           cancelClose();
+          if (card.classList.contains('pinned')) return;
           closeTimer = setTimeout(() => {
+            if (card.classList.contains('pinned')) return;
             const ae = document.activeElement;
             if (ae && card.contains(ae) && (ae.tagName === 'SELECT' || ae.tagName === 'INPUT')) {
               const onBlur = () => {
                 ae.removeEventListener('blur', onBlur);
-                if (!card.matches(':hover')) card.classList.remove('expanded');
+                if (!card.matches(':hover') && !card.classList.contains('pinned')) {
+                  card.classList.remove('expanded');
+                }
               };
               ae.addEventListener('blur', onBlur, {once: true});
               return;
@@ -2689,6 +2962,35 @@
             card.classList.remove('expanded');
           }, 90);
         });
+
+        // Clicking ANYWHERE inside a collapsible section keeps it pinned open.
+        // Clicking the header title area when already pinned collapses & unpins it.
+        card.addEventListener('click', (e) => {
+          cancelClose();
+          const titleEl = card.querySelector(':scope > .card-title');
+          const bodyEl = card.querySelector(':scope > .card-body');
+          const inBody = !!(bodyEl && bodyEl.contains(e.target));
+          if (inBody) {
+            card.classList.add('pinned', 'expanded');
+            return;
+          }
+          if (titleEl && titleEl.contains(e.target)) {
+            const onHeaderCtrl = !!e.target.closest('label.switch, button, input, select, .radio-group');
+            if (onHeaderCtrl) {
+              if (card.classList.contains('expanded')) {
+                card.classList.add('pinned');
+              }
+              return;
+            }
+            if (card.classList.contains('pinned')) {
+              card.classList.remove('pinned', 'expanded');
+            } else {
+              card.classList.add('pinned', 'expanded');
+            }
+            return;
+          }
+          card.classList.add('pinned', 'expanded');
+        }, true);
       });
     }
 
@@ -2763,8 +3065,8 @@
               <span class="setting-desc">Evita mover el widget por accidente o contráelo manualmente</span>
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="style-toggle-btn" id="w_minbtn_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'minimized', 'w_minbtn_${wId}')">— Minimizado</button>
-              <button type="button" class="style-toggle-btn" id="w_lock_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'lock_position', 'w_lock_${wId}')">🔒 Posición Fija</button>
+              <button type="button" class="style-toggle-btn" id="w_minbtn_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'minimized', 'w_minbtn_${wId}')"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="8" y1="12" x2="16" y2="12"/></svg> Minimizado</button>
+              <button type="button" class="style-toggle-btn" id="w_lock_${wId}" onclick="toggleWidgetStyleFlag('${wId}', 'lock_position', 'w_lock_${wId}')"><svg class="ico ico-sm" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Posición Fija</button>
             </div>
           </div>
           <div class="setting-row">
@@ -2773,11 +3075,11 @@
               <span class="setting-desc">Coloca el widget exactamente en una esquina o al centro superior</span>
             </div>
             <div style="display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end;">
-              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_left', ${def.w}, ${def.h})">↖ Sup Izq</button>
-              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_center', ${def.w}, ${def.h})">↑ Centro</button>
-              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_right', ${def.w}, ${def.h})">↗ Sup Der</button>
-              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_left', ${def.w}, ${def.h})">↙ Inf Izq</button>
-              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_right', ${def.w}, ${def.h})">↘ Inf Der</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_left', ${def.w}, ${def.h})"><svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="17" y1="17" x2="7" y2="7"/><polyline points="7 16 7 7 16 7"/></svg> Sup Izq</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_center', ${def.w}, ${def.h})"><svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg> Centro</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'top_right', ${def.w}, ${def.h})"><svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="8 7 17 7 17 16"/></svg> Sup Der</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_left', ${def.w}, ${def.h})"><svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="17" y1="7" x2="7" y2="17"/><polyline points="16 17 7 17 7 8"/></svg> Inf Izq</button>
+              <button type="button" class="btn" style="padding:5px 8px; font-size:11px;" onclick="snapWidgetPreset('${wId}', 'bottom_right', ${def.w}, ${def.h})"><svg class="ico ico-sm" viewBox="0 0 24 24"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 8 17 17 8 17"/></svg> Inf Der</button>
             </div>
           </div>
 
@@ -2818,7 +3120,7 @@
               <span class="setting-desc">Espaciado interno entre filas, iconos o renglones</span>
             </div>
             <div class="slider-container">
-              <input type="range" id="w_isp_${wId}" min="0.60" max="1.80" step="0.05" value="1.0" oninput="updateWidget('${wId}', {item_spacing: parseFloat(this.value)}); updateLabel('lbl_isp_${wId}', Math.round(this.value*100)+'%')">
+              <input type="range" id="w_isp_${wId}" min="0.60" max="2.50" step="0.05" value="1.0" oninput="updateWidget('${wId}', {item_spacing: parseFloat(this.value)}); updateLabel('lbl_isp_${wId}', Math.round(this.value*100)+'%')">
               <span class="slider-val" id="lbl_isp_${wId}">100%</span>
             </div>
           </div>
@@ -2942,6 +3244,13 @@
       updateSetting('general', 'launcher_mode', mode);
     }
 
+    function setOpenWinPos(val) {
+      document.querySelectorAll('#open-win-pos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-owpos') === val);
+      });
+      updateSetting('general', 'open_windows_position', val);
+    }
+
     function setCapsuleStyle(st) {
       document.querySelectorAll('#capsule-style-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === st);
@@ -2954,6 +3263,13 @@
         el.classList.toggle('selected', el.getAttribute('data-bpos') === bpos);
       });
       updateSetting('general', 'media_capsule_btn_pos', bpos);
+    }
+
+    function setCapsuleBtnStyle(st) {
+      document.querySelectorAll('#capsule-btnstyle-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bstyle') === st);
+      });
+      updateSetting('general', 'media_capsule_btn_style', st);
     }
 
     function setCapsuleColor(key, swatchId, hex) {
@@ -3048,7 +3364,7 @@
                 <strong style="font-size:13px; cursor:pointer;" onclick="applyThemePreset('${t.id}')">${escapeHtml(t.name)}</strong>
                 <div style="display:flex; gap:5px;">
                   <button type="button" class="btn" style="padding:3px 8px; font-size:11px;" onclick="applyThemePreset('${t.id}')">Aplicar</button>
-                  <button type="button" class="btn" style="padding:3px 8px; font-size:11px; color:var(--danger);" onclick="deleteCustomTheme('${t.id}')">×</button>
+                  <button type="button" class="btn" style="padding:3px 8px; font-size:11px; color:var(--danger);" onclick="deleteCustomTheme('${t.id}')" title="Eliminar tema">${SVG.close}</button>
                 </div>
               </div>
               <div class="theme-swatches">${(t.swatches || []).map(c => `<span class="theme-dot" style="background:${c};"></span>`).join('')}</div>
@@ -3108,6 +3424,10 @@
       document.getElementById('autohide').checked = gen.autohide !== false;
       const openWinEl = document.getElementById('show_open_windows');
       if (openWinEl) openWinEl.checked = !!gen.show_open_windows;
+      const owPos = gen.open_windows_position || 'right';
+      document.querySelectorAll('#open-win-pos-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-owpos') === owPos);
+      });
       document.getElementById('start_with_windows').checked = !!gen.start_with_windows;
       document.getElementById('locked').checked = !!gen.locked;
       const lMode = gen.launcher_mode || 'custom';
@@ -3116,6 +3436,14 @@
       });
       const mcEnEl = document.getElementById('media_capsule_enabled');
       if (mcEnEl) mcEnEl.checked = !!gen.media_capsule_enabled;
+      const mcAutoHideEl = document.getElementById('media_capsule_auto_hide_idle');
+      if (mcAutoHideEl) mcAutoHideEl.checked = gen.media_capsule_auto_hide_idle !== false;
+      const mcKeepAudioEl = document.getElementById('media_capsule_keep_audio_on_blur');
+      if (mcKeepAudioEl) mcKeepAudioEl.checked = gen.media_capsule_keep_audio_on_blur !== false;
+      const mcBSc = gen.media_capsule_btn_scale ?? 1.0;
+      const mcBScEl = document.getElementById('media_capsule_btn_scale');
+      if (mcBScEl) mcBScEl.value = mcBSc;
+      updateLabel('lbl-mc-bscale', Math.round(mcBSc * 100) + '%');
       const mcSt = gen.media_capsule_style || 'cristal';
       document.querySelectorAll('#capsule-style-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === mcSt);
@@ -3123,6 +3451,10 @@
       const mcBp = gen.media_capsule_btn_pos || 'right';
       document.querySelectorAll('#capsule-btnpos-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-bpos') === mcBp);
+      });
+      const mcBStyle = gen.media_capsule_btn_style || 'clasico';
+      document.querySelectorAll('#capsule-btnstyle-group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-bstyle') === mcBStyle);
       });
       const mcSc = gen.media_capsule_scale ?? 1.0;
       const mcScEl = document.getElementById('media_capsule_scale');
@@ -3263,8 +3595,20 @@
       updateLabel('lbl-indsz', (app.indicator_size ?? 4) + ' px');
       const dbStEl = document.getElementById('dock_battery_style');
       if (dbStEl) dbStEl.value = app.dock_battery_style || 'ring';
-      const dcStEl = document.getElementById('dock_clock_style');
-      if (dcStEl) dcStEl.value = app.dock_clock_style || 'wide_5_3';
+      const dcRawSt = app.dock_clock_style || 'cristal';
+      const dcStMap = {wide_5_3: 'cristal', digital: 'cristal', flip_wide: 'flip'};
+      const dcNormSt = dcStMap[dcRawSt] || dcRawSt;
+      document.querySelectorAll('#dock_clock_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-dcstyle') === dcNormSt);
+      });
+      const dcAp = app.dock_clock_aspect || ((dcRawSt === 'wide_5_3' || dcRawSt === 'flip_wide' || dcRawSt === 'glass_split' || dcRawSt === 'cristal') ? '5_3' : '1_1');
+      document.querySelectorAll('#dock_clock_aspect_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-dcap') === dcAp);
+      });
+      const dcSc = app.dock_clock_scale ?? 1.0;
+      const dcScEl = document.getElementById('dock_clock_scale');
+      if (dcScEl) dcScEl.value = dcSc;
+      updateLabel('lbl-dc-scale', Math.round(dcSc * 100) + '%');
       const dc24 = document.getElementById('dock_clock_24h');
       if (dc24) dc24.checked = app.dock_clock_24h !== false;
       const dcSec = document.getElementById('dock_clock_seconds');
@@ -3276,6 +3620,16 @@
       if (dcSw) dcSw.style.backgroundColor = dcCol;
       const dcInp = document.getElementById('dock_clock_color_input');
       if (dcInp) dcInp.value = dcCol;
+      const dcFfEl = document.getElementById('dock_clock_font_family');
+      if (dcFfEl) dcFfEl.value = app.dock_clock_font_family || 'Segoe UI';
+      const dcFSc = app.dock_clock_font_scale ?? 1.0;
+      const dcFScEl = document.getElementById('dock_clock_font_scale');
+      if (dcFScEl) dcFScEl.value = dcFSc;
+      updateLabel('lbl-dc-fscale', Math.round(dcFSc * 100) + '%');
+      const bDcBold = document.getElementById('btn_dc_bold');
+      if (bDcBold) bDcBold.classList.toggle('active', app.dock_clock_font_bold !== false);
+      const bDcItal = document.getElementById('btn_dc_italic');
+      if (bDcItal) bDcItal.classList.toggle('active', !!app.dock_clock_font_italic);
 
       document.getElementById('show_labels').checked = app.show_labels !== false;
       document.getElementById('label_font_family').value = app.label_font_family || 'Segoe UI';
@@ -3325,6 +3679,10 @@
       const cStyle = wc.clock_style || 'moderno';
       document.querySelectorAll('#w_clock_style_group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === cStyle);
+      });
+      const cAp = wc.aspect_preset || 'auto';
+      document.querySelectorAll('#w_clock_aspect_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cap') === cAp);
       });
       const cAlign = wc.alignment || 'left';
       document.querySelectorAll('#w_clock_align_group .radio-option').forEach(el => {
@@ -3641,6 +3999,27 @@
         el.classList.toggle('selected', el.getAttribute('data-cstyle') === styleName);
       });
       updateWidget('clock', {clock_style: styleName});
+    }
+
+    function setClockAspect(ap) {
+      document.querySelectorAll('#w_clock_aspect_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-cap') === ap);
+      });
+      updateWidget('clock', {aspect_preset: ap, custom_w: null, custom_h: null});
+    }
+
+    function setDockClockAspect(ap) {
+      document.querySelectorAll('#dock_clock_aspect_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-dcap') === ap);
+      });
+      updateSetting('appearance', 'dock_clock_aspect', ap);
+    }
+
+    function setDockClockStyle(st) {
+      document.querySelectorAll('#dock_clock_style_group .radio-option').forEach(el => {
+        el.classList.toggle('selected', el.getAttribute('data-dcstyle') === st);
+      });
+      updateSetting('appearance', 'dock_clock_style', st);
     }
 
     function setClockAlign(align) {
@@ -4034,74 +4413,92 @@
       automate: ['power automate', 'scripts', 'automator'],
       pdf: ['pdf', 'adobe', 'certificados', 'preview'],
       adobe: ['adobe', 'pdf'],
-      macos: ['macos', 'apple', 'finder', 'safari']
+      macos: ['macos', 'apple', 'finder', 'safari'],
+      samsung: ['samsung', 'galaxy', 'one ui', 'android'],
+      android: ['samsung', 'galaxy', 'mensajes', 'telefono'],
+      outlinear: ['outlinear', 'outline', 'minimal', 'linea'],
+      outline: ['outlinear', 'minimal', 'linea'],
+      facebook: ['facebook', 'meta', 'social'],
+      instagram: ['instagram', 'fotos', 'social'],
+      cloudflare: ['cloudflare', 'nube', 'dns', 'red'],
+      home: ['home', 'casa', 'inicio', 'escritorio'],
+      inicio: ['inicio', 'home', 'casa', 'windows'],
+      medicina: ['medicina', 'salud', 'cruz medica', 'hospital', 'urgencias', 'botiquin'],
+      urgencias: ['urgencias', 'emergencias', 'ambulancia', 'sirena', 'hospital', 'cruz medica'],
+      emergencia: ['urgencias', 'emergencias', 'ambulancia', 'sirena', 'botiquin'],
+      emergencias: ['emergencias', 'urgencias', 'ambulancia', 'sirena'],
+      hospital: ['hospital', 'clinica', 'cruz medica', 'ambulancia', 'urgencias'],
+      prevencion: ['prevencion', 'escudo', 'casco', 'mascarilla', 'higiene', 'salud'],
+      ejercicio: ['ejercicio', 'mancuerna', 'correr', 'bicicleta', 'yoga', 'ritmo'],
+      gym: ['ejercicio', 'mancuerna', 'correr'],
+      pastillas: ['pastillas', 'capsula', 'blister', 'frasco', 'medicamento'],
+      capsula: ['capsula', 'pastillas', 'frasco', 'medicamento'],
+      superheroe: ['batman', 'superman', 'spider-man', 'iron man', 'avengers', 'capitan america'],
+      heroes: ['batman', 'superman', 'spider-man', 'iron man', 'avengers', 'capitan america'],
+      batman: ['batman'],
+      superman: ['superman'],
+      spiderman: ['spider-man', 'spider'],
+      avengers: ['avengers', 'iron man', 'capitan america', 'thor', 'hulk'],
+      sodexo: ['sodexo', 'salud ocupacional', 'estrella']
     };
 
     function getSuggestedIcons(item) {
       if (!iconPacksCache || !item) return [];
-      const nameWords = (item.name || '').toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
-      const targetBase = ((item.target || '').split(/[\\/]/).pop() || '').replace(/\.(exe|lnk|bat|cmd|ps1|vbs|xlsx?|docx?|pdf|png|ico)$/i, '').toLowerCase();
-      const targetWords = targetBase.split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
-      const actionWords = (item.action_type || '').toLowerCase().split(/[^a-z0-9áéíóúñ]+/).filter(w => w.length >= 2);
-
-      const primaryTerms = new Set([...nameWords, ...actionWords]);
-      const secondaryTerms = new Set(targetWords);
-      const synonymTerms = new Set();
-
-      [...primaryTerms, ...secondaryTerms].forEach(w => {
-        if (ICON_SYNONYMS[w]) ICON_SYNONYMS[w].forEach(s => {
-          if (!primaryTerms.has(s)) synonymTerms.add(s);
-        });
+      const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const ignored = new Set(['de', 'del', 'el', 'la', 'los', 'las', 'para', 'the', 'microsoft', 'classic', 'pwa', 'grupo']);
+      const words = value => norm(value).split(' ').filter(w => w.length >= 2 && !ignored.has(w));
+      const primary = new Set(words(item.name));
+      const secondary = new Set();
+      const hints = new Set();
+      const synonyms = new Set();
+      const target = String(item.target || '').split(/[\\/]/).pop() || '';
+      const extension = (target.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase();
+      const base = target.replace(/\.[a-z0-9]+$/i, '');
+      const hosts = new Set(['explorer', 'chrome_proxy', 'msedge_proxy', 'rundll32', 'python', 'pythonw', 'wscript', 'cscript']);
+      if (!hosts.has(base.toLowerCase())) words(base).forEach(w => secondary.add(w));
+      const fileTypes = {xls: 'excel', xlsx: 'excel', xlsm: 'excel', xlsb: 'excel', doc: 'word', docx: 'word', docm: 'word', ppt: 'powerpoint', pptx: 'powerpoint', pptm: 'powerpoint', pdf: 'pdf'};
+      if (fileTypes[extension]) hints.add(fileTypes[extension]);
+      if (item.type === 'clock') ['reloj', 'clock'].forEach(w => hints.add(w));
+      if (item.type === 'battery') ['bateria', 'battery'].forEach(w => hints.add(w));
+      if (item.type === 'group') ['folder', 'carpeta'].forEach(w => secondary.add(w));
+      const actions = {
+        app_launcher: ['aplicaciones', 'apps', 'launcher', 'launchpad'],
+        show_desktop: ['escritorio', 'desktop'], snipping_tool: ['recortes', 'snipping', 'scissors'],
+        dock_settings: ['ajustes', 'settings', 'configuracion'], settings: ['ajustes', 'settings'],
+        recycle_bin: ['papelera', 'trash', 'recycle'], lock_pc: ['bloquear', 'lock'],
+        shutdown_pc: ['apagar', 'shutdown'], restart_pc: ['reiniciar', 'restart'], logoff_pc: ['sesion', 'logoff']
+      };
+      (actions[item.action_type] || words(item.action_type)).forEach(w => hints.add(w));
+      [...primary, ...secondary, ...hints].forEach(word => {
+        (ICON_SYNONYMS[word] || []).forEach(term => synonyms.add(norm(term)));
       });
-      if (item.type === 'group') {
-        ['folder', 'carpeta', 'apps', 'documents', 'projects'].forEach(s => synonymTerms.add(s));
-      }
-
+      const matches = (name, term) => (' ' + name + ' ').includes(' ' + term + ' ');
+      const scoreTerms = (name, terms, weight) => [...terms].reduce((sum, term) => sum + (matches(name, term) ? weight : 0), 0);
       const scored = [];
-      iconPacksCache.forEach(pack => {
-        pack.icons.forEach(ic => {
-          const n = ic.name.toLowerCase();
-          let score = 0;
-          primaryTerms.forEach(t => {
-            if (n === t) score += 30;
-            else if (t.length >= 3 && (n.includes(t) || t.includes(n))) score += 14;
-          });
-          secondaryTerms.forEach(t => {
-            if (primaryTerms.has(t)) return;
-            if (n === t) score += 12;
-            else if (t.length >= 3 && (n.includes(t) || t.includes(n))) score += 5;
-          });
-          synonymTerms.forEach(t => {
-            if (n === t) score += 8;
-            else if (t.length >= 3 && n.includes(t)) score += 3;
-          });
-          if (score > 0) {
-            if (pack.name === 'Apps Originales' && item.type !== 'group') score += 10;
-            else if (item.type === 'group' && (pack.name === 'Carpetas 3D Windows 11' || pack.name === 'Carpetas Temáticas' || pack.name === 'Carpetas de Colores')) score += 6;
-            else if (pack.name === 'Windows 11 Fluent') score += 5;
-            else if (pack.name === 'Apps 3D Fluent') score += 4;
-            else if (pack.name === 'macOS') score += 3;
-            scored.push({score, pack: pack.name, ic});
-          }
-        });
-      });
+      iconPacksCache.forEach(pack => pack.icons.forEach(ic => {
+        const name = norm(ic.name);
+        if ((item.type === "clock" || item.type === "battery") && !scoreTerms(name, hints, 1)) return;
+        let score = scoreTerms(name, primary, 30) + scoreTerms(name, hints, 45);
+        score += scoreTerms(name, secondary, 10) + scoreTerms(name, synonyms, 4);
+        if (!score) return;
+        if (name === norm(item.name)) score += 60;
+        if (pack.name === 'Apps Originales' && item.type !== 'group') score += 10;
+        else if (item.type === 'group' && pack.name.startsWith('Carpetas')) score += 6;
+        else if (pack.name === 'Windows 11 Fluent') score += 5;
+        scored.push({score, pack: pack.name, ic});
+      }));
       scored.sort((a, b) => b.score - a.score);
-      const seenHashes = new Set();
-      const deduped = [];
-      for (const entry of scored) {
+      const seen = new Set();
+      return scored.filter(entry => {
         const key = entry.ic.hash || entry.ic.url;
-        if (seenHashes.has(key)) continue;
-        seenHashes.add(key);
-        deduped.push(entry);
-        if (deduped.length >= 8) break;
-      }
-      if (deduped.length === 0 && iconPacksCache[0]) {
-        return iconPacksCache[0].icons.slice(0, 8).map(ic => ({pack: iconPacksCache[0].name, ic}));
-      }
-      return deduped;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }).slice(0, 8);
     }
 
     async function openIconModal(idx, childIdx = null) {
+      const request = ++iconModalRequest;
       editingItemIdx = idx;
       editingChildIdx = (childIdx !== undefined && childIdx !== null) ? childIdx : null;
       document.getElementById('pack-filter').value = '';
@@ -4115,8 +4512,10 @@
       if (!iconPacksCache) {
         const res = await fetch('/api/icon_packs');
         const data = await res.json();
+        if (request !== iconModalRequest) return;
         iconPacksCache = data.packs || [];
       }
+      if (request !== iconModalRequest) return;
       const sugWrap = document.getElementById('icon-suggestions-wrap');
       const sugRow = document.getElementById('icon-suggestions-row');
       const suggestions = getSuggestedIcons(item);
@@ -4139,6 +4538,7 @@
     }
 
     function closeIconModal() {
+      iconModalRequest++;
       document.getElementById('icon-pack-modal').classList.remove('open');
       editingItemIdx = null;
       editingChildIdx = null;
@@ -4165,18 +4565,18 @@
         return;
       }
       e.preventDefault();
-      try { window.close(); } catch (_) {}
+      try { closeProjectPanel(); } catch (_) {}
     });
 
     const FEATURED_PACKS = [
       'Apps Originales',
       'Windows 11 Fluent',
-      'Apps 3D Fluent',
       'macOS',
-      'Carpetas 3D Windows 11',
-      'Carpetas Temáticas',
-      'Carpetas de Colores',
-      'Acciones Pro'
+      'Samsung One UI',
+      'Outlinear Minimal',
+      'Salud y Medicina',
+      'Superhéroes',
+      'Sodexo'
     ];
 
     function setPackGridSize(sz, btnEl) {
@@ -4260,8 +4660,12 @@
         const packOrder = new Map([
           ['Apps Originales', 0],
           ['Windows 11 Fluent', 1],
-          ['Apps 3D Fluent', 2],
-          ['macOS', 3]
+          ['macOS', 2],
+          ['Samsung One UI', 3],
+          ['Outlinear Minimal', 4],
+          ['Salud y Medicina', 5],
+          ['Superhéroes', 6],
+          ['Sodexo', 7]
         ]);
         const orderedPacks = [...iconPacksCache].sort((a, b) => {
           const pa = packOrder.has(a.name) ? packOrder.get(a.name) : 99;
@@ -4428,7 +4832,7 @@
 
     window.addEventListener('resize', scheduleSaveBounds);
     window.addEventListener('beforeunload', () => savePanelBoundsNow(true));
-    setInterval(() => savePanelBoundsNow(false), 1800);
+    setInterval(() => { if (!document.hidden) savePanelBoundsNow(false); }, 5000);
 
     // Live lifecycle channel: auto-close immediately when dockbar is clicked, closed, or opens another HTML panel
     (function setupPanelLifecycle() {
@@ -4444,7 +4848,7 @@
         isClosing = true;
         try { savePanelBoundsNow(true); } catch (e) {}
         try { if (es) es.close(); } catch (e) {}
-        try { window.close(); } catch (e) {}
+        try { closeProjectPanel(); } catch (e) {}
       }
 
       function verifyServerAlive() {
@@ -4465,16 +4869,14 @@
             if (!data) return;
             if (data.ok === false) {
               closePanelNow();
-            } else if (panelToken && data.active_token !== panelToken) {
+            } else if (panelToken && data.active_token && data.active_token !== panelToken) {
               closePanelNow();
             }
           })
           .catch(() => {
             // Confirm server is genuinely stopped (2 consecutive network failures) before closing
             netFailCount += 1;
-            if (netFailCount >= 2) {
-              closePanelNow();
-            } else {
+            if (netFailCount < 2) {
               setTimeout(verifyServerAlive, 400);
             }
           });
@@ -4492,7 +4894,7 @@
         })
         .then(data => {
           if (legacyServerDetected || !data) return;
-          if (data.ok === false || (panelToken && data.active_token !== panelToken)) {
+          if (data.ok === false || (panelToken && data.active_token && data.active_token !== panelToken)) {
             closePanelNow();
             return;
           }

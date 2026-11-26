@@ -11,7 +11,24 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont, ImageFilter, ImageChops
 
 import icon_extractor
 from custom_menu import CustomMenu
-from window_utils import set_tool_window, update_layered_pil, release_layered_surface, flatten_pil_for_colorkey, alpha_rounded_rect, alpha_ellipse, alpha_line, resolve_styled_font
+from window_utils import (
+    animate_window,
+    cancel_window_animation,
+    set_tool_window,
+    update_layered_pil,
+    release_layered_surface,
+    flatten_pil_for_colorkey,
+    alpha_rounded_rect,
+    alpha_ellipse,
+    alpha_line,
+    resolve_styled_font,
+    resolve_shortcut_target,
+    open_file_location,
+    copy_files_to_clipboard,
+    copy_text_to_clipboard,
+    share_path_via_email,
+    show_file_properties,
+)
 
 user32 = ctypes.windll.user32
 shell32 = ctypes.windll.shell32
@@ -67,6 +84,7 @@ class GroupFlyout:
         self.esc_was_released = False
         self._check_job = None
         self._fade_job = None
+        self._refresh_job = None
         self.active_menu = None
         self.modal_open = False
 
@@ -131,9 +149,15 @@ class GroupFlyout:
         v = self._icon_variants.get(key)
         if v is None:
             src = self.child_icons.get(it_id)
+            if src is None and it_id not in self.child_icons:
+                item = next((it for it in self._get_items_list() if it.get('id') == it_id), None)
+                if item is not None:
+                    src = icon_extractor.get_or_create_icon(item, size=128)
+                    self.child_icons[it_id] = src
             if src is None:
                 return None, None
-            ic = src.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+            source = src if src.mode == "RGBA" else src.convert("RGBA")
+            ic = source.resize((size, size), Image.Resampling.LANCZOS)
             pad = 8
             sh = Image.new("RGBA", (size + pad * 2, size + pad * 2), (0, 0, 0, 0))
             alpha = ic.getchannel("A").point(lambda a: int(a * 0.42))
@@ -143,6 +167,8 @@ class GroupFlyout:
             sh = sh.filter(ImageFilter.GaussianBlur(4))
             v = (ic, sh)
             self._icon_variants[key] = v
+            if (it_id, self.ICON_SZ) in self._icon_variants and (it_id, self.ICON_SZ_HOVER) in self._icon_variants:
+                self.child_icons.pop(it_id, None)
         return v
 
     def _label_style(self):
@@ -290,16 +316,8 @@ class GroupFlyout:
         self._check_click_outside()
 
     def _run_fade_in(self):
-        """Lightweight 4-frame fade + rise-in (approx 70ms total)."""
-        self._fade_job = None
-        if not self.window or not self.window.winfo_exists():
-            return
-        steps = (0.35, 0.62, 0.86, 1.0)
-        if self._fade_step < len(steps):
-            self._render(alpha_mult=steps[self._fade_step], rise=int((1.0 - steps[self._fade_step]) * 8))
-            self._fade_step += 1
-            if self._fade_step < len(steps):
-                self._fade_job = self.parent.after(16, self._run_fade_in)
+        self._render()
+        animate_window(self.window, layered_hwnd=self.top_hwnd)
 
     def _check_click_outside(self):
         if not self.window or not self.window.winfo_exists():
@@ -453,7 +471,7 @@ class GroupFlyout:
         return lines, truncated
 
     def _render(self, alpha_mult=1.0, rise=0):
-        if not self.window or not self.window.winfo_exists():
+        if getattr(self, "_closing", False) or not self.window or not self.window.winfo_exists():
             return
 
         w, h = self.win_w, self.win_h
@@ -729,13 +747,22 @@ class GroupFlyout:
         if self.on_close_windows:
             self.on_close_windows(child)
         if self.window and self.window.winfo_exists():
-            self.parent.after(300, self._render)
+            self._schedule_refresh(300)
 
     def _kill_child_process(self, child):
         if self.on_kill_process:
             self.on_kill_process(child)
         if self.window and self.window.winfo_exists():
-            self.parent.after(280, self._render)
+            self._schedule_refresh(280)
+
+    def _schedule_refresh(self, delay):
+        if self._refresh_job:
+            self.parent.after_cancel(self._refresh_job)
+        self._refresh_job = self.parent.after(delay, self._refresh)
+
+    def _refresh(self):
+        self._refresh_job = None
+        self._render()
 
     def _on_right_click(self, event):
         x, y = event.x, event.y
@@ -771,6 +798,25 @@ class GroupFlyout:
             primary_lbl = f"Ejecutar {name}" if is_action else f"Abrir {name}"
             menu.add_command(primary_lbl, lambda: self._launch_and_close(clicked_child))
 
+            if not is_action:
+                raw_tgt = (clicked_child.get("target") or "").strip()
+                res_tgt = resolve_shortcut_target(raw_tgt) if raw_tgt else ""
+                local_p = res_tgt if (res_tgt and os.path.exists(res_tgt)) else (raw_tgt if (raw_tgt and os.path.exists(raw_tgt)) else "")
+                if local_p:
+                    menu.add_command("Abrir ubicación del archivo", lambda c=clicked_child: self._open_location(c))
+                is_url = raw_tgt.lower().startswith(("http://", "https://"))
+                if local_p or is_url:
+                    sec_sh = menu.add_section("Compartir", expanded=False)
+                    if local_p:
+                        sec_sh.add_command("Copiar archivo (pegar para compartir)", lambda p=local_p: copy_files_to_clipboard([p]))
+                        sec_sh.add_command("Enviar por correo electrónico...", lambda p=local_p, n=name: share_path_via_email(p, n))
+                        sec_sh.add_command("Copiar ruta del archivo", lambda p=local_p: copy_text_to_clipboard(p))
+                        sec_sh.add_separator()
+                        sec_sh.add_command("Propiedades de Windows...", lambda p=local_p: show_file_properties(p))
+                    else:
+                        sec_sh.add_command("Copiar enlace", lambda p=raw_tgt: copy_text_to_clipboard(p))
+                        sec_sh.add_command("Enviar enlace por correo...", lambda p=raw_tgt, n=name: share_path_via_email(p, n))
+
             sec_el = menu.add_section("Editar elemento", expanded=False)
             sec_el.add_command("Cambiar icono...", lambda c=clicked_child: self._pick_child_icon(c))
             if (not is_action) or clicked_child.get("icon_path"):
@@ -779,7 +825,6 @@ class GroupFlyout:
             if not is_action:
                 sec_el.add_separator()
                 sec_el.add_command("Ejecutar como administrador", lambda: self._launch_as_admin(clicked_child))
-                sec_el.add_command("Abrir ubicación del archivo", lambda: self._open_location(clicked_child))
             sec_el.add_separator()
             sec_el.add_command("Sacar a la Dockbar", lambda c=clicked_child: self._extract_from_group(c))
             sec_el.add_command("Quitar de esta carpeta", lambda c=clicked_child: self._remove_from_group(c), danger=True)
@@ -839,9 +884,9 @@ class GroupFlyout:
             messagebox.showerror("Error", f"No se pudo ejecutar como administrador:\n{e}", parent=self.window)
 
     def _open_location(self, child):
-        target = child.get("target", "")
-        if target and os.path.exists(target):
-            subprocess.Popen(f'explorer.exe /select,"{os.path.abspath(target)}"')
+        target = (child.get("target") or "").strip()
+        if target:
+            open_file_location(target)
 
     def _pick_group_icon(self):
         group_id = self.group_item.get("id")
@@ -1019,7 +1064,30 @@ class GroupFlyout:
         if self.on_group_modified:
             self.on_group_modified("ungroup", self.group_item.get("id"))
 
-    def close(self):
+    def close(self, animate=True):
+        if getattr(self, '_closing', False):
+            if not animate:
+                self._finish_close()
+            return
+        self._closing = True
+        callback, self.on_close = self.on_close, None
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass
+        if animate and self.window and self.window.winfo_exists():
+            self.window.unbind('<Escape>')
+            animate_window(self.window, showing=False, on_done=self._finish_close, layered_hwnd=self.top_hwnd)
+        else:
+            self._finish_close()
+
+    def _finish_close(self):
+        if self._refresh_job:
+            self.parent.after_cancel(self._refresh_job)
+            self._refresh_job = None
+        if self.window:
+            cancel_window_animation(self.window)
         if getattr(self, "active_menu", None):
             try:
                 self.active_menu.close()
@@ -1053,7 +1121,9 @@ class GroupFlyout:
             self.window = None
 
         self.photo_ref = None
+        self.canvas = None
         self._bg_cache = None
+        self._font_cache.clear()
         self.child_icons.clear()
         self._icon_variants.clear()
         self.item_boxes.clear()

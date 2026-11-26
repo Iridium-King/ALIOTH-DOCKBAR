@@ -18,7 +18,7 @@ BUILTIN_THEMES = [
         "name": "macOS X / Sequoia",
         "desc": "Cristal esmerilado flotante, iconos estilo Apple y punto indicador blanco",
         "swatch": ["#252b3b", "#60a5fa"],
-        "packs": ["macOS", "macOS Carpetas", "Apps 3D Fluent"],
+        "packs": ["macOS", "macOS Carpetas", "Apps Originales"],
         "appearance": {
             "bg_color": "#1e222d",
             "bg_opacity": 0.78,
@@ -45,7 +45,7 @@ BUILTIN_THEMES = [
         "name": "Windows 11 Fluent",
         "desc": "Mica oscura moderna con acento azul Fluent e indicador tipo píldora",
         "swatch": ["#141926", "#38bdf8"],
-        "packs": ["Windows 11 Fluent", "Carpetas 3D Windows 11", "Apps 3D Fluent"],
+        "packs": ["Windows 11 Fluent", "Carpetas de Colores", "Apps Originales"],
         "appearance": {
             "bg_color": "#141926",
             "bg_opacity": 0.86,
@@ -97,9 +97,9 @@ BUILTIN_THEMES = [
     {
         "id": "android_material",
         "name": "Android Material You",
-        "desc": "Píldora superredondeada en tono esmeralda/verde azulado con iconos 3D",
+        "desc": "Píldora superredondeada en tono esmeralda/verde azulado con iconos Samsung One UI",
         "swatch": ["#132620", "#34d399"],
-        "packs": ["Apps 3D Fluent", "Carpetas Frosted Glass", "Acciones Pro"],
+        "packs": ["Samsung One UI", "Carpetas Frosted Glass", "Acciones Pro"],
         "appearance": {
             "bg_color": "#13221e",
             "bg_opacity": 0.88,
@@ -126,7 +126,7 @@ BUILTIN_THEMES = [
         "name": "Cyberpunk Neón",
         "desc": "Borde brillante doble en cian eléctrico sobre negro OLED e iconos cristal",
         "swatch": ["#07090f", "#22d3ee"],
-        "packs": ["Cristal Minimal", "Acciones Pro", "Apps 3D Fluent"],
+        "packs": ["Outlinear Minimal", "Cristal Minimal", "Acciones Pro"],
         "appearance": {
             "bg_color": "#07090f",
             "bg_opacity": 0.92,

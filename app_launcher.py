@@ -5,18 +5,22 @@ Ultra-fast, button-anchored macOS/App-Drawer style floating Launcher for Alioth 
 import ctypes
 from ctypes import wintypes
 import json
+import queue
 import math
 import os
 import subprocess
 import threading
 import time
 import tkinter as tk
+from tkinter import simpledialog
 from PIL import Image, ImageDraw, ImageTk
 
 import app_search
 import icon_extractor
 from custom_menu import CustomMenu
 from window_utils import (
+    animate_window,
+    cancel_window_animation,
     alpha_rounded_rect,
     alpha_ellipse,
     alpha_line,
@@ -25,6 +29,12 @@ from window_utils import (
     resolve_styled_font,
     set_tool_window,
     update_layered_pil,
+    resolve_shortcut_target,
+    open_file_location,
+    copy_files_to_clipboard,
+    copy_text_to_clipboard,
+    share_path_via_email,
+    show_file_properties,
 )
 
 user32 = ctypes.windll.user32
@@ -169,6 +179,8 @@ class CustomAppLauncher:
         on_close=None,
         on_launch_feedback=None,
         on_add_to_dock=None,
+        get_dock_groups=None,
+        on_add_to_group=None,
     ):
         self.parent = parent
         self.dock_pos = dock_pos
@@ -177,11 +189,15 @@ class CustomAppLauncher:
         self.on_close = on_close
         self.on_launch_feedback = on_launch_feedback
         self.on_add_to_dock = on_add_to_dock
+        self.get_dock_groups = get_dock_groups
+        self.on_add_to_group = on_add_to_group
 
         self.window = None
         self.canvas = None
         self.search_entry = None
-        self.search_var = tk.StringVar()
+        self.search_var = tk.StringVar(master=parent)
+        self._search_trace = None
+        self._focus_job = None
         self.top_hwnd = None
         self.transparent_key = "#010203"
         self.photo_ref = None
@@ -197,7 +213,9 @@ class CustomAppLauncher:
         self._caret_visible = True
         self._clear_btn_rect = None
         self._closed = False
+        self._modal_open = False
         self._loading_icons = set()
+        self._ui_queue = queue.SimpleQueue()
         self.opened_ts = 0.0
         self.win_x = 0
         self.win_y = 0
@@ -221,7 +239,7 @@ class CustomAppLauncher:
             if self._closed or not self.window:
                 return
             try:
-                self.parent.after(0, self._sync_from_catalog)
+                self._ui_queue.put("catalog")
             except Exception:
                 pass
 
@@ -289,7 +307,7 @@ class CustomAppLauncher:
             font=("Segoe UI", 11),
         )
         self.search_entry.place(x=60, y=27 + y_off, width=self.CARD_W - 108, height=24)
-        self.search_var.trace_add("write", lambda *_: self._on_filter_change())
+        self._search_trace = self.search_var.trace_add("write", lambda *_: self._on_filter_change())
 
         self.canvas.bind("<Motion>", self._on_motion)
         self.canvas.bind("<Leave>", self._on_leave)
@@ -304,7 +322,8 @@ class CustomAppLauncher:
         self.search_entry.bind("<ButtonRelease-1>", lambda _e: self._on_caret_activity())
 
         self._render()
-        self.window.after(25, lambda: (self.window and self.window.winfo_exists() and self.window.focus_force(), self.search_entry and self.search_entry.focus_set()))
+        animate_window(self.window, layered_hwnd=self.top_hwnd)
+        self._focus_job = self.window.after(25, lambda: (self.window and self.window.winfo_exists() and self.window.focus_force(), self.search_entry and self.search_entry.focus_set()))
         self._poll_outside_click()
         self._blink_caret()
 
@@ -339,10 +358,11 @@ class CustomAppLauncher:
     def _launch_app(self, app):
         target = (app.get("target") or "").strip()
         args = (app.get("args") or "").strip()
+        feedback = self.on_launch_feedback
         self.close()
-        if self.on_launch_feedback:
+        if feedback:
             try:
-                self.on_launch_feedback()
+                feedback()
             except Exception:
                 pass
         if not target:
@@ -370,14 +390,23 @@ class CustomAppLauncher:
         except Exception as e:
             print(f"[Launcher] Admin launch error: {e}")
 
+    def _resolve_app_path(self, app):
+        for k in ("target", "lnk_path", "icon_src"):
+            cand = (app.get(k) or "").strip()
+            if not cand or cand.lower().startswith(("shell:", "http://", "https://")):
+                continue
+            res = resolve_shortcut_target(cand)
+            if res and os.path.exists(res):
+                return res
+            if os.path.exists(cand):
+                return cand
+        return ""
+
     def _open_location(self, app):
-        target = (app.get("target") or "").strip()
+        path = self._resolve_app_path(app) or (app.get("target") or "").strip()
         self.close()
-        if target and os.path.exists(target):
-            try:
-                subprocess.Popen(f'explorer.exe /select,"{os.path.abspath(target)}"')
-            except Exception:
-                pass
+        if path:
+            open_file_location(path)
 
     def _add_to_dock(self, app):
         if self.on_add_to_dock:
@@ -385,6 +414,26 @@ class CustomAppLauncher:
                 self.on_add_to_dock(app)
             except Exception as e:
                 print(f"[Launcher] Add to dock error: {e}")
+
+    def _add_to_new_group(self, app):
+        if not self.on_add_to_group or not self.window or not self.window.winfo_exists():
+            return
+        self._modal_open = True
+        try:
+            default_nm = (app.get("name") or "Apps").strip()
+            gname = simpledialog.askstring(
+                "Nueva Carpeta en Dockbar",
+                "Nombre de la carpeta:",
+                initialvalue=f"Carpeta ({default_nm})",
+                parent=self.window,
+            )
+        finally:
+            self._modal_open = False
+        if gname and gname.strip():
+            try:
+                self.on_add_to_group(app, new_group_name=gname.strip())
+            except Exception as e:
+                print(f"[Launcher] Add to new group error: {e}")
 
     def _on_scroll(self, event):
         total_rows = max(1, math.ceil(len(self.filtered_apps) / float(self.COLS)))
@@ -441,22 +490,66 @@ class CustomAppLauncher:
             nm = (hit_app.get("name") or "Aplicación").strip()
             menu.add_header(nm[:28])
             menu.add_command(f"Abrir {nm[:22]}", lambda a=hit_app: self._launch_app(a))
-            if self.on_add_to_dock:
-                menu.add_command("Agregar a la Dockbar", lambda a=hit_app: self._add_to_dock(a))
             tgt = (hit_app.get("target") or "").strip()
+            local_p = self._resolve_app_path(hit_app)
+            is_web = tgt.lower().startswith(("http://", "https://"))
             if tgt and not tgt.lower().startswith(("shell:", "http://", "https://")):
                 menu.add_command("Ejecutar como administrador", lambda a=hit_app: self._launch_as_admin(a))
-            if tgt and os.path.exists(tgt):
+
+            if self.on_add_to_dock or self.on_add_to_group:
+                menu.add_separator()
+            if self.on_add_to_dock:
+                menu.add_command("Agregar a la Dockbar", lambda a=hit_app: self._add_to_dock(a))
+            if self.on_add_to_group:
+                sec_grp = menu.add_section("Agregar a carpeta del Dock", expanded=False)
+                groups = []
+                if self.get_dock_groups:
+                    try:
+                        groups = self.get_dock_groups() or []
+                    except Exception:
+                        groups = []
+                for grp in groups:
+                    gid = grp.get("id")
+                    gname = (grp.get("name") or "Carpeta").strip()
+                    sec_grp.add_command(f"Carpeta: {gname[:24]}", lambda a=hit_app, target_gid=gid: self.on_add_to_group(a, group_id=target_gid))
+                if groups:
+                    sec_grp.add_separator()
+                sec_grp.add_command("Crear nueva carpeta con esta app...", lambda a=hit_app: self._add_to_new_group(a))
+
+            if local_p or is_web:
+                menu.add_separator()
+            if local_p:
                 menu.add_command("Abrir ubicación del archivo", lambda a=hit_app: self._open_location(a))
+            if local_p or is_web:
+                sec_sh = menu.add_section("Compartir", expanded=False)
+                if local_p:
+                    sec_sh.add_command("Copiar archivo (pegar para compartir)", lambda p=local_p: copy_files_to_clipboard([p]))
+                    sec_sh.add_command("Enviar por correo electrónico...", lambda p=local_p, n=nm: share_path_via_email(p, n))
+                    sec_sh.add_command("Copiar ruta del archivo", lambda p=local_p: copy_text_to_clipboard(p))
+                    sec_sh.add_separator()
+                    sec_sh.add_command("Propiedades de Windows...", lambda p=local_p: show_file_properties(p))
+                else:
+                    sec_sh.add_command("Copiar enlace", lambda p=tgt: copy_text_to_clipboard(p))
+                    sec_sh.add_command("Enviar enlace por correo...", lambda p=tgt, n=nm: share_path_via_email(p, n))
+
             menu.add_separator()
-        menu.add_command("Actualizar lista de apps", lambda: warm_launcher_cache(force=True, on_ready=lambda: self.parent.after(0, self._sync_from_catalog)))
+        menu.add_command("Actualizar lista de apps", lambda: warm_launcher_cache(force=True, on_ready=lambda: self._ui_queue.put("catalog")))
         menu.add_command("Cerrar lanzador", self.close)
         menu.show(event.x_root, event.y_root)
 
     def _poll_outside_click(self):
         if self._closed or not self.window or not self.window.winfo_exists():
             return
-        if CustomMenu.has_active_menu():
+        actions = set()
+        while not self._ui_queue.empty():
+            actions.add(self._ui_queue.get_nowait())
+        if 'catalog' in actions:
+            self._sync_from_catalog()
+        elif 'render' in actions:
+            self._render()
+        if self._closed:
+            return
+        if CustomMenu.has_active_menu() or getattr(self, "_modal_open", False):
             self._check_job = self.parent.after(60, self._poll_outside_click)
             return
         if time.time() - self.opened_ts > 0.25:
@@ -509,7 +602,7 @@ class CustomAppLauncher:
                 updated = True
             if updated and not self._closed:
                 try:
-                    self.parent.after(0, self._render)
+                    self._ui_queue.put("render")
                 except Exception:
                     pass
 
@@ -679,8 +772,34 @@ class CustomAppLauncher:
             self.canvas.delete("all")
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo_ref)
 
-    def close(self):
+    def close(self, animate=True):
+        if getattr(self, '_closing', False):
+            if not animate:
+                self._finish_close()
+            return
+        self._closing = True
         self._closed = True
+        callback, self.on_close = self.on_close, None
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass
+        if animate and self.window and self.window.winfo_exists():
+            animate_window(self.window, showing=False, on_done=self._finish_close, layered_hwnd=self.top_hwnd)
+        else:
+            self._finish_close()
+
+    def _finish_close(self):
+        self._closed = True
+        if self.window:
+            cancel_window_animation(self.window)
+            if self._focus_job:
+                self.window.after_cancel(self._focus_job)
+        self._focus_job = None
+        if self.search_var is not None and self._search_trace:
+            self.search_var.trace_remove("write", self._search_trace)
+        self._search_trace = None
         if self._caret_job:
             try:
                 self.parent.after_cancel(self._caret_job)
@@ -702,8 +821,20 @@ class CustomAppLauncher:
             except Exception:
                 pass
             self.window = None
+        self.search_var = None
         self.search_entry = None
+        self.canvas = None
+        self.photo_ref = None
         self._bg_cache = None
+        self.all_apps.clear()
+        self.filtered_apps.clear()
+        self.item_boxes.clear()
+        self._loading_icons.clear()
+        self.on_launch_feedback = None
+        self.on_add_to_dock = None
+        self.get_dock_groups = None
+        self.on_add_to_group = None
+        self.parent = None
         if self.on_close:
             try:
                 self.on_close()

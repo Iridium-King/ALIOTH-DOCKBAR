@@ -4,6 +4,7 @@ import time
 import traceback
 import ctypes
 from ctypes import wintypes
+from local_state import create_instance_mutex, close_instance_mutex, desktop_name
 
 # Enable True Native Per-Monitor V2 High-DPI Awareness for razor-sharp fonts and graphics
 try:
@@ -39,26 +40,13 @@ kernel32 = ctypes.windll.kernel32
 user32 = ctypes.windll.user32
 ERROR_ALREADY_EXISTS = 183
 
-def _get_desktop_name():
-    try:
-        h_desk = user32.GetThreadDesktop(kernel32.GetCurrentThreadId())
-        buf = ctypes.create_unicode_buffer(128)
-        needed = wintypes.DWORD()
-        if user32.GetUserObjectInformationW(h_desk, 2, buf, 256, ctypes.byref(needed)):
-            safe = "".join(c if c.isalnum() else "_" for c in buf.value)
-            return safe or "Default"
-    except Exception:
-        pass
-    return "Default"
+_get_desktop_name = desktop_name
 
 def check_single_instance():
     """Ensures one instance per Windows Desktop using a scoped Win32 Mutex."""
     desk = _get_desktop_name()
     mutex_name = f"Local\\AliothDockbar_Mutex_{desk}"
-    mutex = kernel32.CreateMutexW(None, False, mutex_name)
-    last_error = kernel32.GetLastError()
-    if last_error == ERROR_ALREADY_EXISTS:
-        return None
+    mutex = create_instance_mutex(mutex_name)
     return mutex
 
 def _notify_running_instance():
@@ -71,11 +59,12 @@ def _notify_running_instance():
         return False
 
 def run_dock():
-    """Runs a single session of DockWindow. Widgets run in their own dedicated process."""
+    """Shares the Tk event loop and image libraries between Dockbar and widgets."""
     import queue
-    import subprocess
+    import copy
     from config import ConfigManager
     from dock_window import DockWindow
+    from widget_runtime import WidgetRuntime, any_widget_enabled
 
     config_mgr = ConfigManager()
     if config_mgr.get("general", "start_with_windows", False):
@@ -85,35 +74,24 @@ def run_dock():
             print(f"[Startup] Sync warning: {e}")
     settings_window_ref = [None]
     dock_ref = [None]
-    widgets_proc_ref = [None]
+    widgets_ref = [None]
     ui_queue = queue.SimpleQueue()
+    ui_job = [None]
 
-    def _sync_widgets_process():
-        widgets_cfg = config_mgr.data.get("widgets", {})
-        any_enabled = any(isinstance(v, dict) and v.get("enabled") for v in widgets_cfg.values())
-        proc = widgets_proc_ref[0]
-        if any_enabled:
-            if proc is None or proc.poll() is not None:
-                try:
-                    w_script = os.path.join(BASE_DIR, "widgets_main.py")
-                    if os.path.exists(w_script):
-                        widgets_proc_ref[0] = subprocess.Popen(
-                            [sys.executable, w_script],
-                            cwd=BASE_DIR,
-                            creationflags=0x08000000  # CREATE_NO_WINDOW
-                        )
-                        print(f"[Alioth Dockbar] Proceso independiente de widgets lanzado (PID {widgets_proc_ref[0].pid}).")
-                except Exception as ex:
-                    print(f"[Alioth Dockbar] No se pudo lanzar widgets_main.py: {ex}")
+    def _sync_widgets():
+        runtime = widgets_ref[0]
+        if any_widget_enabled(config_mgr):
+            if runtime is None or not runtime.active:
+                widgets_ref[0] = WidgetRuntime(dock_ref[0].root, config_mgr, on_open_settings=open_settings)
+            else:
+                runtime.refresh()
+        elif runtime:
+            _stop_widgets()
 
-    def _stop_widgets_process():
-        proc = widgets_proc_ref[0]
-        if proc is not None and proc.poll() is None:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-        widgets_proc_ref[0] = None
+    def _stop_widgets():
+        if widgets_ref[0]:
+            widgets_ref[0].close()
+            widgets_ref[0] = None
 
     def open_settings(pick_icon_id=None, child_id=None):
         try:
@@ -138,17 +116,28 @@ def run_dock():
 
     dock = DockWindow(config_mgr, on_open_settings=open_settings)
     dock_ref[0] = dock
+    def _before_close():
+        _stop_widgets()
+        if ui_job[0]:
+            dock.root.after_cancel(ui_job[0])
+            ui_job[0] = None
+
+    dock.on_before_close = _before_close
+    dock_config = [copy.deepcopy({key: config_mgr.data.get(key) for key in ("general", "appearance", "items")})]
 
     def _drain_ui_queue():
+        ui_job[0] = None
         try:
             while not ui_queue.empty():
                 action = ui_queue.get_nowait()
                 if callable(action):
                     action()
                 elif action == "update":
-                    if dock_ref[0]:
+                    current = {key: config_mgr.data.get(key) for key in ("general", "appearance", "items")}
+                    if dock_ref[0] and current != dock_config[0]:
                         dock_ref[0].live_update()
-                    _sync_widgets_process()
+                        dock_config[0] = copy.deepcopy(current)
+                    _sync_widgets()
                 elif action == "reveal":
                     if dock_ref[0]:
                         dock_ref[0].force_reveal()
@@ -160,9 +149,9 @@ def run_dock():
         except Exception as ex:
             print(f"[UI Queue] Error: {ex}")
         if dock_ref[0] and not getattr(dock_ref[0], "user_wants_exit", False):
-            dock_ref[0].root.after(40, _drain_ui_queue)
+            ui_job[0] = dock_ref[0].root.after(40, _drain_ui_queue)
 
-    dock.root.after(40, _drain_ui_queue)
+    ui_job[0] = dock.root.after(40, _drain_ui_queue)
 
     # Pre-start lightweight HTML settings API server in background thread
     try:
@@ -178,23 +167,21 @@ def run_dock():
             dock_status_fn=dock.get_debug_status
         )
     except Exception as e:
-        print(f"[Settings Server] Note on pre-start: {e}")
+        print(f"[Settings Server] No se inició otra instancia: {e}")
+        dock.root.destroy()
+        return True
 
-    # Launch standalone widgets process only if at least one widget is enabled
-    _sync_widgets_process()
+    # Widgets reuse this process while retaining independent desktop windows.
+    try:
+        _sync_widgets()
+        dock.root.mainloop()
+        return getattr(dock, 'user_wants_exit', False)
+    finally:
+        _before_close()
+        settings_server.stop_server()
+        if not dock.user_wants_exit:
+            dock.close()
 
-    dock.root.mainloop()
-
-    wants_exit = getattr(dock, "user_wants_exit", False)
-    if wants_exit:
-        try:
-            import settings_server
-            settings_server.stop_server()
-        except Exception:
-            pass
-        _stop_widgets_process()
-
-    return wants_exit
 
 def main():
     is_autostart = "--autostart" in sys.argv
@@ -261,7 +248,7 @@ def main():
         except Exception:
             pass
         if mutex:
-            kernel32.CloseHandle(mutex)
+            close_instance_mutex(mutex)
         print(f"[Alioth Dockbar] Proceso finalizado. ({time.strftime('%Y-%m-%d %H:%M:%S')})")
 
 if __name__ == "__main__":

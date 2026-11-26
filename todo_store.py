@@ -3,7 +3,8 @@ import os
 import time
 import uuid
 import hashlib
-import ctypes
+import copy
+from local_state import InterProcessLock as _InterProcessLock, merge_changes
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -29,34 +30,6 @@ OUTLOOK_NOTEBOOK_DEFAULT = {
     "name": "Outlook",
     "color": "#0ea5e9",
 }
-
-
-class _InterProcessLock:
-    """Lightweight Win32 Named Mutex guard so Widget UI, CLI, and MCP never clobber config.json."""
-    def __init__(self, name="Local\\AliothTodoStore_Mutex"):
-        self.name = name
-        self.handle = None
-
-    def __enter__(self):
-        try:
-            k32 = ctypes.windll.kernel32
-            h = k32.CreateMutexW(None, False, self.name)
-            if h:
-                k32.WaitForSingleObject(h, 4000)
-                self.handle = h
-        except Exception:
-            self.handle = None
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.handle:
-            try:
-                k32 = ctypes.windll.kernel32
-                k32.ReleaseMutex(self.handle)
-                k32.CloseHandle(self.handle)
-            except Exception:
-                pass
-            self.handle = None
 
 
 def _norm_text(s):
@@ -165,6 +138,7 @@ def add_task(
     deduplicate=True,
     switch_active=False,
     config_path=DEFAULT_CONFIG_PATH,
+    _data=None,
 ):
     clean_text = str(text or "").strip()
     if not clean_text:
@@ -178,7 +152,7 @@ def add_task(
             clean_text = f"{clean_text} ({sender_short[:28]})"
 
     with _InterProcessLock():
-        data = _load_raw_config(config_path)
+        data = _load_raw_config(config_path) if _data is None else _data
         todo_cfg = data.setdefault("widgets", {}).setdefault("todo_list", {})
         notebooks, active_id = ensure_todo_structure(todo_cfg)
         nb = find_or_create_notebook(notebooks, notebook or active_id)
@@ -210,15 +184,26 @@ def add_task(
             task_obj["external_id"] = str(external_id).strip()[:120]
             if dkey not in seen_ids:
                 seen_ids.append(dkey)
-                if len(seen_ids) > 500:
-                    del seen_ids[:-500]
 
         nb.setdefault("tasks", []).append(task_obj)
         if switch_active:
             todo_cfg["active_notebook_id"] = nb["id"]
         ensure_todo_structure(todo_cfg)
-        _save_raw_config(data, config_path)
+        if _data is None:
+            _save_raw_config(data, config_path)
         return {"added": True, "notebook": nb["name"], "notebook_id": nb["id"], "task": task_obj}
+
+
+def commit_notebooks(notebooks, baseline, active_id=None, config_path=DEFAULT_CONFIG_PATH):
+    with _InterProcessLock():
+        data = _load_raw_config(config_path)
+        todo = data.setdefault('widgets', {}).setdefault('todo_list', {})
+        latest, previous_active = ensure_todo_structure(todo)
+        merged = merge_changes(baseline, notebooks, latest)
+        todo['notebooks'] = merged
+        todo['active_notebook_id'] = active_id or previous_active
+        ensure_todo_structure(todo)
+        _save_raw_config(data, config_path)
 
 
 def list_tasks(notebook=None, status="all", query="", config_path=DEFAULT_CONFIG_PATH):
@@ -403,7 +388,7 @@ def ensure_inbox_file(inbox_path=DEFAULT_INBOX_PATH):
     """Creates an empty todo_inbox.json if missing so Power Automate / OneDrive can pick it immediately."""
     if not os.path.exists(inbox_path):
         try:
-            with open(inbox_path, "w", encoding="utf-8") as f:
+            with open(inbox_path, "x", encoding="utf-8") as f:
                 json.dump({"items": []}, f, indent=2, ensure_ascii=False)
         except Exception:
             pass
@@ -437,12 +422,12 @@ def _parse_inbox_payload(raw_text):
             obj = json.loads(ln)
             if isinstance(obj, dict):
                 items.append(obj)
-        except Exception:
-            pass
+        except Exception as exc:
+            raise ValueError("Entrada incompleta; se conservó la bandeja.") from exc
     return items
 
 
-def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook="Outlook", config_path=DEFAULT_CONFIG_PATH):
+def _ingest_claimed_inbox(inbox_path, default_notebook, config_path):
     """
     Reads todo_inbox.json (written by Power Automate / Outlook / scripts), adds new tasks with
     deduplication into the 'Outlook' notebook tab (or item-specified notebook), and resets
@@ -465,6 +450,7 @@ def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook="Outlook",
     added_count = 0
     dup_count = 0
     added_tasks = []
+    batch_data = _load_raw_config(config_path)
 
     for entry in entries:
         text = (
@@ -500,6 +486,7 @@ def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook="Outlook",
             deduplicate=True,
             switch_active=False,
             config_path=config_path,
+            _data=batch_data,
         )
         if res.get("added"):
             added_count += 1
@@ -507,20 +494,9 @@ def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook="Outlook",
         else:
             dup_count += 1
 
-    # Clear inbox queue atomically so OneDrive stays clean and doesn't re-trigger unnecessarily
-    try:
-        cleared = {
-            "items": [],
-            "last_ingested_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "last_added": added_count,
-            "last_duplicates_skipped": dup_count,
-        }
-        tmp_in = f"{inbox_path}.{os.getpid()}.tmp"
-        with open(tmp_in, "w", encoding="utf-8") as f:
-            json.dump(cleared, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_in, inbox_path)
-    except Exception:
-        pass
+    if added_count:
+        _save_raw_config(batch_data, config_path)
+    os.remove(inbox_path)
 
     return {
         "added": added_count,
@@ -528,3 +504,25 @@ def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook="Outlook",
         "total_read": len(entries),
         "tasks": added_tasks,
     }
+
+
+def ingest_todo_inbox(inbox_path=DEFAULT_INBOX_PATH, default_notebook='Outlook', config_path=DEFAULT_CONFIG_PATH):
+    totals = {'added': 0, 'duplicates': 0, 'total_read': 0, 'tasks': []}
+    with _InterProcessLock():
+        directory = os.path.dirname(os.path.abspath(inbox_path))
+        prefix = os.path.basename(inbox_path) + '.'
+        pending = [os.path.join(directory, name) for name in os.listdir(directory) if name.startswith(prefix) and name.endswith('.pending')]
+        if os.path.exists(inbox_path):
+            with open(inbox_path, 'r', encoding='utf-8-sig') as f:
+                raw = f.read()
+            if _parse_inbox_payload(raw):
+                claimed = inbox_path + '.' + uuid.uuid4().hex + '.pending'
+                os.replace(inbox_path, claimed)
+                pending.append(claimed)
+        ensure_inbox_file(inbox_path)
+        for claimed in pending:
+            result = _ingest_claimed_inbox(claimed, default_notebook, config_path)
+            for key in ('added', 'duplicates', 'total_read'):
+                totals[key] += result.get(key, 0)
+            totals['tasks'].extend(result.get('tasks', []))
+    return totals
