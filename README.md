@@ -28,15 +28,21 @@ Ejecutados en un proceso ligero independiente (`widgets_main.py`) con recorte au
 
 ---
 
-## 🛠️ Requisitos e Inicio Rápido
+## 🛠️ Requisitos, Modo Portable e Inicio Rápido
 
-1. **Python 3.11+** en Windows 10/11 con `Pillow` y `pywin32`:
+1. **Modo Portable (sin instalar Python en el equipo destino):**
+   - Si existe la carpeta `runtime\` junto a `main.py` (generada con `crear_paquete_portable.ps1` o con Python portable + `tkinter`, `Pillow` y `pywin32`), `iniciar.vbs`, `iniciar.bat`, `detener.bat` y el inicio automático de Windows la utilizan automáticamente antes que el Python del sistema.
+   - Para empaquetar una versión limpia de producción en `dist\Alioth-Dockbar-Portable.zip` (sin `config.json` personal, logs ni caché), ejecuta:
+     ```powershell
+     .\crear_paquete_portable.ps1
+     ```
+2. **Modo Desarrollo / Python instalado (`3.11+`):**
    ```powershell
-   pip install pillow pywin32
+   pip install -r requirements.txt
    ```
-2. **Iniciar en segundo plano (sin consola):**
+3. **Iniciar en segundo plano (sin consola):**
    Haz doble clic en `iniciar.vbs` o `iniciar.bat`.
-3. **Abrir Panel de Control en Vivo:**
+4. **Abrir Panel de Control en Vivo:**
    Haz clic derecho sobre la Dockbar → **Configuración de Alioth Dockbar...**
-4. **Detener:**
+5. **Detener:**
    Ejecuta `detener.bat` o elige **Salir de Alioth Dockbar** en el menú contextual.

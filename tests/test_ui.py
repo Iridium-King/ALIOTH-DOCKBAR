@@ -45,6 +45,26 @@ class WindowTests(unittest.TestCase):
         self.assertIsNone(folder.window)
         self.assertNotIn(handle, _surface_cache)
 
+    def test_folder_icon_size_and_large_label_font_resize_flyout(self):
+        self.manager.set('appearance', 'folder_icon_size', 84)
+        self.manager.set('appearance', 'folder_label_font_size', 24)
+        folder = GroupFlyout(
+            self.root,
+            {'id': 'grp', 'name': 'Apps', 'items': [{'id': 'c1', 'name': 'Documento Muy Largo', 'target': ''}]},
+            (10, 10, 60, 60),
+            config_mgr=self.manager,
+        )
+        self.addCleanup(folder.close)
+        self.pump()
+        self.assertEqual(folder._icon_sizes()[0], 84)
+        self.assertEqual(folder._label_style()[2], 24)
+        self.assertGreaterEqual(folder.cell_w, 84 + 48)
+        self.assertGreaterEqual(folder.cell_h, 11 + 84 + 18)
+        self.manager.set('appearance', 'folder_icon_size', 40)
+        folder.refresh_style()
+        self.pump()
+        self.assertEqual(folder._icon_sizes()[0], 40)
+
     def test_widget_minimize_restore_and_close(self):
         widgets = DesktopWidgetManager(self.root, self.manager)
         self.addCleanup(widgets.close)

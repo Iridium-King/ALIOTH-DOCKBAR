@@ -8,8 +8,9 @@ from functools import wraps
 import winreg
 import ctypes
 from local_state import InterProcessLock as _ConfigFileMutex, merge_changes
+from app_paths import app_dir as _app_dir, is_frozen as _is_frozen
 
-DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+DEFAULT_CONFIG_PATH = os.path.join(_app_dir(), "config.json")
 STARTUP_LINK_NAME = "AliothDockbar.lnk"
 
 DEFAULT_CONFIG = {
@@ -69,6 +70,7 @@ DEFAULT_CONFIG = {
         "label_bold": False,
         "label_italic": False,
         "label_bg_opacity": 0.90,
+        "folder_icon_size": 56,
         "folder_show_labels": True,
         "folder_label_font_family": "Segoe UI",
         "folder_label_font_size": 11,
@@ -559,15 +561,25 @@ class ConfigManager:
 
     @staticmethod
     def _resolve_healthy_pythonw():
+        if _is_frozen():
+            return os.path.abspath(sys.executable)
+        dock_dir = _app_dir()
+        for local_rt in (os.path.join(dock_dir, "runtime"), os.path.join(dock_dir, "python")):
+            cand = os.path.join(local_rt, "pythonw.exe")
+            if os.path.exists(cand) and os.path.exists(os.path.join(local_rt, "Lib", "encodings", "__init__.py")):
+                return cand
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         cur_pyw = os.path.join(exe_dir, "pythonw.exe")
         if os.path.exists(cur_pyw) and os.path.exists(os.path.join(exe_dir, "Lib", "encodings", "__init__.py")):
             return cur_pyw
         for py_dir in (
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python313"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python315"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python314"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python313"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python312"),
             os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311"),
+            r"C:\Program Files\Python315",
+            r"C:\Program Files\Python314",
             r"C:\Program Files\Python313",
             r"C:\Program Files\Python312",
         ):
@@ -577,7 +589,7 @@ class ConfigManager:
         return cur_pyw if os.path.exists(cur_pyw) else "pyw.exe"
 
     @staticmethod
-    def _configure_user_logon_task(enable, pythonw="", pyw_path="", local_dir=""):
+    def _configure_user_logon_task(enable, pythonw="", pyw_path="", local_dir="", arguments=None):
         """Best-effort per-user Task Scheduler logon trigger via COM (no admin required)."""
         try:
             import win32com.client
@@ -592,6 +604,7 @@ class ConfigManager:
                     pass
                 return True
 
+            expected_args = arguments if arguments is not None else f'"{pyw_path}"'
             try:
                 existing = root_folder.GetTask(task_name)
             except Exception:
@@ -600,7 +613,7 @@ class ConfigManager:
                 if not existing.Enabled:
                     raise RuntimeError('El inicio está deshabilitado en Windows; se respeta esa decisión.')
                 action = existing.Definition.Actions.Item(1)
-                if action.Path.lower() == pythonw.lower() and action.Arguments == f'"{pyw_path}"':
+                if action.Path.lower() == pythonw.lower() and action.Arguments == expected_args:
                     return True
             task_def = service.NewTask(0)
             reg_info = task_def.RegistrationInfo
@@ -631,7 +644,7 @@ class ConfigManager:
 
             action = task_def.Actions.Create(0)  # TASK_ACTION_EXEC
             action.Path = pythonw
-            action.Arguments = f'"{pyw_path}"'
+            action.Arguments = expected_args
             action.WorkingDirectory = local_dir
 
             # TASK_CREATE_OR_UPDATE = 6, TASK_LOGON_INTERACTIVE_TOKEN = 3
@@ -656,7 +669,20 @@ class ConfigManager:
         run_val_name = "AliothDockbar"
 
         if enable:
-            dock_dir = os.path.dirname(os.path.abspath(__file__))
+            dock_dir = _app_dir()
+            if _is_frozen():
+                exe_path = os.path.abspath(sys.executable)
+                if not self._configure_user_logon_task(True, pythonw=exe_path, local_dir=dock_dir, arguments="--autostart"):
+                    raise RuntimeError('No se verificó la tarea de inicio; se conservaron los mecanismos existentes.')
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key_path, 0, winreg.KEY_SET_VALUE) as key:
+                        winreg.DeleteValue(key, run_val_name)
+                except FileNotFoundError:
+                    pass
+                if os.path.exists(shortcut_path):
+                    os.remove(shortcut_path)
+                return
+
             main_py = os.path.join(dock_dir, "main.py")
             config_json = os.path.join(dock_dir, "config.json")
             pythonw = self._resolve_healthy_pythonw()
@@ -732,6 +758,10 @@ def write_log(msg):
 
 
 def resolve_pythonw():
+    for local_rt in (os.path.join(DOCK_DIR, "runtime"), os.path.join(DOCK_DIR, "python")):
+        cand = os.path.join(local_rt, "pythonw.exe")
+        if os.path.exists(cand) and os.path.exists(os.path.join(local_rt, "Lib", "encodings", "__init__.py")):
+            return cand
     if PREF_PYW and os.path.exists(PREF_PYW):
         return PREF_PYW
     exe_dir = os.path.dirname(os.path.abspath(sys.executable))
@@ -739,10 +769,13 @@ def resolve_pythonw():
     if os.path.exists(cur_pyw):
         return cur_pyw
     candidates = [
-        os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python313"),
+        os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python315"),
         os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python314"),
+        os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python313"),
         os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python312"),
         os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Python\\Python311"),
+        r"C:\\Program Files\\Python315",
+        r"C:\\Program Files\\Python314",
         r"C:\\Program Files\\Python313",
         r"C:\\Program Files\\Python312",
     ]

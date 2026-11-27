@@ -5,8 +5,9 @@ import uuid
 import hashlib
 import copy
 from local_state import InterProcessLock as _InterProcessLock, merge_changes
+from app_paths import app_dir
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = app_dir()
 DEFAULT_CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 DEFAULT_INBOX_PATH = os.path.join(BASE_DIR, "todo_inbox.json")
 

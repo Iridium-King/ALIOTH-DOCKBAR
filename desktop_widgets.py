@@ -1125,7 +1125,8 @@ def _import_widget_bg_image(src_path, max_dim=960):
     """Downscales large wallpapers once to cache/widget_bgs/ so widget RAM stays tiny (<1 MB)."""
     try:
         import hashlib
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        from app_paths import app_dir as _app_dir
+        base_dir = _app_dir()
         bg_dir = os.path.join(base_dir, "cache", "widget_bgs")
         os.makedirs(bg_dir, exist_ok=True)
         h = hashlib.md5(f"{src_path}|{os.path.getmtime(src_path)}".encode("utf-8", "ignore")).hexdigest()[:14]

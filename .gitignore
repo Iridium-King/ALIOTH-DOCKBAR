@@ -19,3 +19,9 @@ conversacion/
 PNG *.png
 Thumbs.db
 Desktop.ini
+
+# Portable runtime & release packages
+runtime/
+build/
+dist/
+*.spec

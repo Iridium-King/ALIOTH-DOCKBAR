@@ -5,6 +5,7 @@ import ctypes
 import traceback
 from ctypes import wintypes
 from local_state import create_instance_mutex, close_instance_mutex, desktop_name
+from app_paths import app_dir
 import tkinter as tk
 
 # Enable True Native Per-Monitor V2 High-DPI Awareness
@@ -16,7 +17,7 @@ except Exception:
     except Exception:
         pass
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = app_dir()
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 

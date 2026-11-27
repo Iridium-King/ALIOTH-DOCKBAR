@@ -1218,7 +1218,7 @@
     <div class="brand-wrap">
       <img src="/assets/logo.png" alt="Alioth Dockbar" class="brand-logo" onerror="this.style.display='none'">
       <div class="title-area">
-        <h1>Alioth Dockbar <span style="font-size:12px; font-weight:normal; opacity:0.6;">Panel de Control</span></h1>
+        <h1>Alioth Dockbar <span style="font-size:12px; font-weight:normal; opacity:0.6;">Panel de Control</span> <span id="app-version-badge" style="font-size:11px; font-weight:600; color:#7dd3fc; background:rgba(56,189,248,0.14); border:1px solid rgba(56,189,248,0.32); padding:2px 8px; border-radius:999px; margin-left:6px; vertical-align:middle;">v__APP_VERSION__</span></h1>
         <p>Personalización visual y funcional en tiempo real</p>
       </div>
     </div>
@@ -1725,7 +1725,7 @@
                 <option value="Verdana">Verdana</option>
               </select>
               <div class="slider-container" style="width:150px;">
-                <input type="range" id="label_font_size" min="9" max="22" value="12" oninput="updateSetting('appearance', 'label_font_size', parseInt(this.value)); updateLabel('lbl-fsize', this.value + ' px')">
+                <input type="range" id="label_font_size" min="9" max="32" value="12" oninput="updateSetting('appearance', 'label_font_size', parseInt(this.value)); updateLabel('lbl-fsize', this.value + ' px')">
                 <span class="slider-val" id="lbl-fsize">12 px</span>
               </div>
             </div>
@@ -1759,13 +1759,23 @@
           <div class="card-title">
             <span class="card-head-left">
               <svg class="ico ico-accent" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-              Etiquetas de Accesos dentro de Carpetas
+              Carpetas Desplegables (Iconos y Etiquetas)
             </span>
             <span class="card-head-right">
               <svg class="ico collapse-chevron" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
             </span>
           </div>
           <div class="card-body">
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Tamaño de Iconos en Carpetas</span>
+              <span class="setting-desc">Ajusta el tamaño de los accesos mostrados al abrir una carpeta</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="folder_icon_size" min="32" max="96" value="56" oninput="updateSetting('appearance', 'folder_icon_size', parseInt(this.value)); updateLabel('lbl-folder-iconsize', this.value + ' px')">
+              <span class="slider-val" id="lbl-folder-iconsize">56 px</span>
+            </div>
+          </div>
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Mostrar Etiquetas dentro de las Carpetas</span>
@@ -1793,7 +1803,7 @@
                 <option value="Verdana">Verdana</option>
               </select>
               <div class="slider-container" style="width:150px;">
-                <input type="range" id="folder_label_font_size" min="8" max="18" value="11" oninput="updateSetting('appearance', 'folder_label_font_size', parseInt(this.value)); updateLabel('lbl-folder-fsize', this.value + ' px')">
+                <input type="range" id="folder_label_font_size" min="8" max="26" value="11" oninput="updateSetting('appearance', 'folder_label_font_size', parseInt(this.value)); updateLabel('lbl-folder-fsize', this.value + ' px')">
                 <span class="slider-val" id="lbl-folder-fsize">11 px</span>
               </div>
             </div>
@@ -3647,7 +3657,11 @@
       document.getElementById('lbl-fg-swatch').style.backgroundColor = lfg;
       document.getElementById('label_fg_input').value = lfg;
 
-      // Folder shortcut labels
+      // Folder icons & shortcut labels
+      const fIconSz = app.folder_icon_size ?? 56;
+      const fIconEl = document.getElementById('folder_icon_size');
+      if (fIconEl) fIconEl.value = fIconSz;
+      updateLabel('lbl-folder-iconsize', fIconSz + ' px');
       const fShow = document.getElementById('folder_show_labels');
       if (fShow) fShow.checked = app.folder_show_labels !== false;
       const fFam = document.getElementById('folder_label_font_family');
@@ -4481,7 +4495,8 @@
         let score = scoreTerms(name, primary, 30) + scoreTerms(name, hints, 45);
         score += scoreTerms(name, secondary, 10) + scoreTerms(name, synonyms, 4);
         if (!score) return;
-        if (name === norm(item.name)) score += 60;
+        const baseName = norm(ic.name.split(' - ')[0]);
+        if (name === norm(item.name) || baseName === norm(item.name)) score += 60;
         if (pack.name === 'Apps Originales' && item.type !== 'group') score += 10;
         else if (item.type === 'group' && pack.name.startsWith('Carpetas')) score += 6;
         else if (pack.name === 'Windows 11 Fluent') score += 5;

@@ -5,6 +5,7 @@ import traceback
 import ctypes
 from ctypes import wintypes
 from local_state import create_instance_mutex, close_instance_mutex, desktop_name
+from app_paths import app_dir
 
 # Enable True Native Per-Monitor V2 High-DPI Awareness for razor-sharp fonts and graphics
 try:
@@ -15,7 +16,7 @@ except Exception:
     except Exception:
         pass
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = app_dir()
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
@@ -213,6 +214,28 @@ def main():
 
             except SystemExit:
                 print("[Alioth Dockbar] SystemExit capturado. Saliendo.")
+                break
+
+            except (ModuleNotFoundError, ImportError) as e:
+                try:
+                    with open(os.path.join(BASE_DIR, "crash.log"), "a", encoding="utf-8") as f:
+                        f.write(f"\n--- FATAL IMPORT ERROR AT {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+                        traceback.print_exc(file=f)
+                except Exception:
+                    pass
+                print(f"[Alioth Dockbar] Error fatal de dependencia: {e}")
+                if not is_autostart:
+                    try:
+                        user32.MessageBoxW(
+                            0,
+                            f"No se pudo iniciar Alioth Dockbar porque falta una dependencia de Python:\n\n{e}\n\n"
+                            "Usa la carpeta portable 'runtime' o instala los requisitos con:\n"
+                            "pip install -r requirements.txt",
+                            "Alioth Dockbar — Dependencia faltante",
+                            0x10,
+                        )
+                    except Exception:
+                        pass
                 break
 
             except Exception as e:

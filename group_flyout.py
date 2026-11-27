@@ -143,6 +143,17 @@ class GroupFlyout:
                 self.child_icons[it_id] = None
         self._bg_cache = None
 
+    def _icon_sizes(self):
+        cfg = getattr(self, "config_mgr", None)
+        if cfg is None:
+            return self.ICON_SZ, self.ICON_SZ_HOVER
+        try:
+            sz = max(32, min(96, int(cfg.get("appearance", "folder_icon_size", self.ICON_SZ) or self.ICON_SZ)))
+        except Exception:
+            sz = self.ICON_SZ
+        hov = min(108, sz + max(4, round(sz * 0.11)))
+        return sz, hov
+
     def _icon_variant(self, it_id, size):
         """Returns (icon, shadow) pair resized once and cached (keeps hover redraws cheap)."""
         key = (it_id, size)
@@ -167,7 +178,8 @@ class GroupFlyout:
             sh = sh.filter(ImageFilter.GaussianBlur(4))
             v = (ic, sh)
             self._icon_variants[key] = v
-            if (it_id, self.ICON_SZ) in self._icon_variants and (it_id, self.ICON_SZ_HOVER) in self._icon_variants:
+            base_sz, hov_sz = self._icon_sizes()
+            if (it_id, base_sz) in self._icon_variants and (it_id, hov_sz) in self._icon_variants:
                 self.child_icons.pop(it_id, None)
         return v
 
@@ -178,7 +190,7 @@ class GroupFlyout:
         show_labels = bool(cfg.get("appearance", "folder_show_labels", True))
         fam = cfg.get("appearance", "folder_label_font_family", "Segoe UI") or "Segoe UI"
         try:
-            fsz = max(8, min(20, int(cfg.get("appearance", "folder_label_font_size", 11) or 11)))
+            fsz = max(8, min(28, int(cfg.get("appearance", "folder_label_font_size", 11) or 11)))
         except Exception:
             fsz = 11
         bold = bool(cfg.get("appearance", "folder_label_bold", False))
@@ -207,13 +219,17 @@ class GroupFlyout:
             self.cols = 6
         self.rows = max(1, math.ceil(max(1, n) / self.cols))
 
+        icon_sz, _icon_hov = self._icon_sizes()
+        self._last_icon_sz = icon_sz
         show_labels, _fam, fsz, _bold, _italic, _fg = self._label_style()
+        line_step = max(13, int(fsz * 1.28))
         if show_labels:
-            self.cell_w = max(108, 76 + fsz * 3)
-            self.cell_h = max(106, 72 + int(fsz * 2.5) + 12)
+            label_gap = max(9, int(fsz * 0.75))
+            self.cell_w = max(108, icon_sz + 48, 76 + fsz * 3, int(fsz * 5.6))
+            self.cell_h = max(106, 11 + icon_sz + label_gap + int(line_step * 1.8) + 12)
         else:
-            self.cell_w = 92
-            self.cell_h = 80
+            self.cell_w = max(72, icon_sz + 36)
+            self.cell_h = max(64, icon_sz + 24)
         self.pad_x = 14
         self.pad_top = 14
         self.footer_h = 38
@@ -228,6 +244,9 @@ class GroupFlyout:
     def refresh_style(self):
         if not self.window or not self.window.winfo_exists():
             return
+        cur_icon_sz, _ = self._icon_sizes()
+        if getattr(self, "_last_icon_sz", None) != cur_icon_sz:
+            self._icon_variants = {}
         self._calculate_dimensions()
         self._apply_geometry()
         self._render()
@@ -480,6 +499,7 @@ class GroupFlyout:
         composite = self._build_background().copy()
         draw = ImageDraw.Draw(composite)
         show_labels, lbl_fam, lbl_sz, lbl_bold, lbl_italic, lbl_rgb = self._label_style()
+        icon_sz, icon_sz_hover = self._icon_sizes()
         item_font = resolve_styled_font(lbl_fam, lbl_sz, bold=lbl_bold, italic=lbl_italic)
         line_step = max(13, int(lbl_sz * 1.28))
         btn_font = self._font("btn")
@@ -516,7 +536,7 @@ class GroupFlyout:
                 alpha_rounded_rect(composite, [cx1 + 4, cy1 + 3, cx2 - 4, cy2 - 3], radius=14,
                                    fill=(96, 165, 250, 46), outline=(147, 197, 253, 150), width=1)
 
-            sz = self.ICON_SZ_HOVER if is_hov else self.ICON_SZ
+            sz = icon_sz_hover if is_hov else icon_sz
             ic, sh = self._icon_variant(child.get("id"), sz)
             ix = cx1 + (self.cell_w - sz) // 2
             if show_labels:
@@ -536,7 +556,7 @@ class GroupFlyout:
             truncated = False
             if show_labels:
                 lines, truncated = self._wrap_label(draw, full, item_font, self.cell_w - 10)
-                ly = cy1 + 11 + self.ICON_SZ + max(9, int(lbl_sz * 0.75))
+                ly = cy1 + 11 + icon_sz + max(9, int(lbl_sz * 0.75))
                 col_txt = (255, 255, 255, 255) if (is_hov or is_drag_tgt) else ((148, 163, 184, 210) if is_drag_src else (*lbl_rgb, 255))
                 for li, ln in enumerate(lines):
                     draw.text(((cx1 + cx2) / 2.0, ly + li * line_step), ln, fill=col_txt, font=item_font, anchor="mm")
@@ -583,10 +603,10 @@ class GroupFlyout:
         # Floating lifted icon under cursor while drag-reordering
         if self.is_dragging and 0 <= self.pressed_idx < len(items):
             drag_child = items[self.pressed_idx]
-            ic, sh = self._icon_variant(drag_child.get("id"), self.ICON_SZ_HOVER)
+            ic, sh = self._icon_variant(drag_child.get("id"), icon_sz_hover)
             if ic is not None:
-                fx = max(4, min(w - self.ICON_SZ_HOVER - 4, int(self.drag_x - self.ICON_SZ_HOVER // 2)))
-                fy = max(4, min(h - self.ICON_SZ_HOVER - 4, int(self.drag_y - self.ICON_SZ_HOVER // 2)))
+                fx = max(4, min(w - icon_sz_hover - 4, int(self.drag_x - icon_sz_hover // 2)))
+                fy = max(4, min(h - icon_sz_hover - 4, int(self.drag_y - icon_sz_hover // 2)))
                 ghost = ic.copy()
                 ghost.putalpha(ghost.getchannel("A").point(lambda a: int(a * 0.84)))
                 composite.alpha_composite(sh, (fx - 8, fy - 8))
@@ -894,10 +914,10 @@ class GroupFlyout:
             self.close()
             self.on_pick_child_icon(group_id, None)
             return
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        initial_dir = os.path.join(base_dir, "assets", "icon_packs", "Carpetas de Colores")
+        from app_paths import resolve_resource
+        initial_dir = resolve_resource("assets", "icon_packs", "Carpetas de Colores")
         if not os.path.isdir(initial_dir):
-            initial_dir = os.path.join(base_dir, "assets", "icon_packs")
+            initial_dir = resolve_resource("assets", "icon_packs")
         self.modal_open = True
         try:
             path = filedialog.askopenfilename(
@@ -936,8 +956,8 @@ class GroupFlyout:
             self.on_pick_child_icon(group_id, child_id)
             return
         # Fallback to native file dialog if callback not attached
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        initial_dir = os.path.join(base_dir, "assets", "icon_packs")
+        from app_paths import resolve_resource
+        initial_dir = resolve_resource("assets", "icon_packs")
         self.modal_open = True
         try:
             path = filedialog.askopenfilename(

@@ -91,7 +91,9 @@ user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
 gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
 user32.DestroyIcon.argtypes = [wintypes.HICON]
 
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache", "icons")
+from app_paths import app_dir as _app_dir
+
+CACHE_DIR = os.path.join(_app_dir(), "cache", "icons")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def _hbitmap_to_pil(hbm):

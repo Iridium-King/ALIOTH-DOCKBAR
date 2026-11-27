@@ -7,6 +7,7 @@ from tkinter import ttk, messagebox, colorchooser, filedialog, simpledialog
 from PIL import Image, ImageTk
 
 import icon_extractor
+from app_paths import APP_VERSION, resolve_resource
 from window_utils import animate_window, enable_native_motion
 
 user32 = ctypes.windll.user32
@@ -26,7 +27,7 @@ class SettingsWindow:
         self.on_applied = on_applied
 
         self.root = tk.Toplevel()
-        self.root.title("Configuración de Alioth Dockbar")
+        self.root.title(f"Configuración de Alioth Dockbar v{APP_VERSION}")
         bounds = self.config_mgr.data.get("panel_bounds", {}) if isinstance(self.config_mgr.data.get("panel_bounds"), dict) else {}
         try:
             bw = max(640, int(bounds.get("width") or 780))
@@ -317,7 +318,7 @@ class SettingsWindow:
         self.label_size_var = tk.IntVar(value=int(self.config_mgr.get("appearance", "label_font_size", 11)))
         self.label_size_lbl = ttk.Label(f_font, text=f"{self.label_size_var.get()} px", style="Muted.TLabel")
         self.label_size_lbl.pack(side=tk.RIGHT)
-        ttk.Scale(f_font, from_=8, to=18, variable=self.label_size_var, command=self._on_label_size_changed).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=8)
+        ttk.Scale(f_font, from_=8, to=32, variable=self.label_size_var, command=self._on_label_size_changed).pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=8)
 
         # Colors & Opacity
         f_colors = ttk.Frame(lbl_frame, style="Dark.TFrame")
@@ -602,8 +603,7 @@ class SettingsWindow:
             return
 
         self.root.lift()
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        initial_dir = os.path.join(base_dir, "assets", "icon_packs")
+        initial_dir = resolve_resource("assets", "icon_packs")
         if it.get("type") == "group":
             group_icons_dir = os.path.join(initial_dir, "Carpetas de Colores")
             if os.path.isdir(group_icons_dir):
@@ -842,7 +842,7 @@ class SettingsWindow:
 
         ttk.Button(footer, text="Cerrar", style="Dark.TButton", command=self._save_and_close).pack(side=tk.RIGHT, padx=4)
         ttk.Button(footer, text="🌐 Abrir Panel Web (HTML)", style="Dark.TButton", command=self._open_web_settings).pack(side=tk.RIGHT, padx=6)
-        ttk.Label(footer, text="✨ Los cambios se aplican automáticamente en tiempo real.", style="Muted.TLabel").pack(side=tk.LEFT, padx=4)
+        ttk.Label(footer, text=f"✨ Alioth Dockbar v{APP_VERSION} · Los cambios se aplican automáticamente en tiempo real.", style="Muted.TLabel").pack(side=tk.LEFT, padx=4)
 
     def _open_web_settings(self):
         import settings_server

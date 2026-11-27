@@ -9,8 +9,10 @@ import os
 import re
 import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKS_ROOT = os.path.join(BASE_DIR, "assets", "icon_packs")
+from app_paths import app_dir, resolve_resource
+
+BASE_DIR = app_dir()
+PACKS_ROOT = resolve_resource("assets", "icon_packs")
 
 BUILTIN_THEMES = [
     {
@@ -256,12 +258,13 @@ def _match_icon_for_item(item, pack_index):
     best_path = None
     best_score = 0
     for stem, path in pack_index:
+        base_stem = stem.split(" - ")[0].strip()
         score = 0
         for idx_t, tok in enumerate(expanded):
             if not tok:
                 continue
             weight = 3 if idx_t < len(tokens) else 1
-            if stem == tok:
+            if base_stem == tok or stem == tok:
                 score += 20 * weight
             elif len(tok) >= 3 and (tok in stem or stem in tok):
                 score += 8 * weight

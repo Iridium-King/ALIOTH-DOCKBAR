@@ -4,10 +4,15 @@ scriptDir = FSO.GetParentFolderName(WScript.ScriptFullName)
 
 pythonwPath = ""
 candidates = Array( _
-    WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python313"), _
+    scriptDir & "\runtime", _
+    scriptDir & "\python", _
+    WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python315"), _
     WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python314"), _
+    WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python313"), _
     WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python312"), _
     WshShell.ExpandEnvironmentStrings("%LOCALAPPDATA%\Programs\Python\Python311"), _
+    "C:\Program Files\Python315", _
+    "C:\Program Files\Python314", _
     "C:\Program Files\Python313", _
     "C:\Program Files\Python312" _
 )

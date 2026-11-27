@@ -16,6 +16,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 import tkinter as tk
 from tkinter import filedialog, colorchooser
+from app_paths import APP_VERSION, app_dir as _app_dir, resolve_resource as _resolve_resource
 
 SERVER_PORT = 49222
 SERVER_HOST = "127.0.0.1"
@@ -234,7 +235,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = urllib.parse.unquote(parsed.path)
         qs = urllib.parse.parse_qs(parsed.query)
-        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = _app_dir()
         internal = path in ('/api/ping', '/api/reveal', '/api/open_settings') and not self.headers.get('Origin')
         if not self._allowed(authenticate=path.startswith('/api/') and not internal):
             return
@@ -255,7 +256,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                 tok = _active_panel_token
                 ep = _panel_close_epoch
                 n_cli = len(_panel_clients)
-            self._send_json({"ok": not _server_shutting_down, "active_token": tok, "epoch": ep, "clients": n_cli})
+            self._send_json({"ok": not _server_shutting_down, "version": APP_VERSION, "active_token": tok, "epoch": ep, "clients": n_cli})
             return
 
         elif path == "/api/dock_status":
@@ -379,7 +380,7 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/icon_packs":
             try:
-                packs_root = os.path.join(base_dir, "assets", "icon_packs")
+                packs_root = _resolve_resource("assets", "icon_packs")
                 packs = []
                 if os.path.isdir(packs_root):
                     for pack_name in sorted(os.listdir(packs_root)):
@@ -440,8 +441,8 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
 
         elif path == "/favicon.ico":
             fav_candidates = [
-                os.path.join(base_dir, "assets", "favicon.ico"),
-                os.path.join(base_dir, "favicon.ico"),
+                _resolve_resource("assets", "favicon.ico"),
+                _resolve_resource("favicon.ico"),
             ]
             for fc in fav_candidates:
                 if os.path.exists(fc):
@@ -449,14 +450,15 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
                         self._send_bytes(f.read(), "image/x-icon")
                     return
 
-        # Serve static HTML/CSS/JS/Images safely inside base_dir
+        # Serve static HTML/CSS/JS/Images safely inside base_dir / bundled resources
         if path in ("/", "/index.html", "/settings"):
-            file_path = os.path.join(base_dir, "settings.html")
+            file_path = _resolve_resource("settings.html")
             content_type = "text/html; charset=utf-8"
         else:
-            assets = os.path.realpath(os.path.join(base_dir, 'assets'))
-            file_path = os.path.realpath(os.path.join(base_dir, path.lstrip('/').replace('/', os.sep)))
-            if not path.startswith('/assets/') or os.path.commonpath([assets, file_path]) != assets or os.path.splitext(file_path)[1].lower() not in ('.png', '.jpg', '.jpeg', '.svg', '.ico', '.css', '.js'):
+            assets = os.path.realpath(_resolve_resource("assets"))
+            rel_asset = path[len("/assets/"):].replace("/", os.sep) if path.startswith("/assets/") else ""
+            file_path = os.path.realpath(os.path.join(assets, rel_asset)) if rel_asset else ""
+            if not path.startswith('/assets/') or not file_path or os.path.commonpath([assets, file_path]) != assets or os.path.splitext(file_path)[1].lower() not in ('.png', '.jpg', '.jpeg', '.svg', '.ico', '.css', '.js'):
                 self.send_error(403, 'Forbidden')
                 return
             low = file_path.lower()
@@ -479,6 +481,8 @@ class SettingsApiHandler(BaseHTTPRequestHandler):
             try:
                 with open(file_path, "rb") as f:
                     content = f.read()
+                if content_type.startswith("text/html"):
+                    content = content.replace(b"__APP_VERSION__", APP_VERSION.encode("utf-8"))
                 cache_sec = 0 if content_type.startswith("text/html") else 300
                 self._send_bytes(content, content_type, cache_seconds=cache_sec)
             except Exception as e:

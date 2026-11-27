@@ -43,8 +43,10 @@ shell32 = ctypes.windll.shell32
 VK_LWIN = 0x5B
 KEYEVENTF_KEYUP = 0x0002
 
+from app_paths import app_dir as _app_dir
+
 # Persistent module-level caches (survives across drawer opens for <20ms open speed!)
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR = _app_dir()
 _CATALOG_DISK_PATH = os.path.join(_BASE_DIR, "cache", "launcher_catalog.json")
 _CATALOG_LOCK = threading.Lock()
 _CATALOG_CACHE = []

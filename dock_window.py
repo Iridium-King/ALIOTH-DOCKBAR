@@ -1726,8 +1726,8 @@ class DockWindow:
 
         # Estimate tight max width with wave expansion (smaller buffer = faster 60+ FPS blits)
         num_items = max(1, len(self.items))
-        lbl_font_sz = int(self.config_mgr.get("appearance", "label_font_size", 12))
-        label_clearance = max(78, lbl_font_sz + 52) if self.config_mgr.get("appearance", "show_labels", True) else 58
+        lbl_font_sz = max(8, min(36, int(self.config_mgr.get("appearance", "label_font_size", 12) or 12)))
+        label_clearance = max(78, int(lbl_font_sz * 2.5) + 32) if self.config_mgr.get("appearance", "show_labels", True) else 58
         
         dock_h = max(max_icon_h + (pad_y * 2), dock_pill_h_est + 12) + label_clearance
         rest_items_w = sum(base_size * self._item_aspect(it) for it in self.items) if self.items else base_size
@@ -3461,7 +3461,7 @@ class DockWindow:
 
     def _draw_tooltip_label(self, draw, text, item_rect, pill_y1, pill_y2, win_w, pos):
         font_name = self.config_mgr.get("appearance", "label_font_family", "Segoe UI")
-        font_size = int(self.config_mgr.get("appearance", "label_font_size", 11))
+        font_size = max(8, min(36, int(self.config_mgr.get("appearance", "label_font_size", 11) or 11)))
         label_bold = bool(self.config_mgr.get("appearance", "label_bold", False))
         label_italic = bool(self.config_mgr.get("appearance", "label_italic", False))
         bg_hex = self.config_mgr.get("appearance", "label_bg", "#121318")
@@ -4975,8 +4975,8 @@ class DockWindow:
             except TypeError:
                 pass
         # Fallback if no HTML settings callback available
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        initial_dir = os.path.join(base_dir, "assets", "icon_packs")
+        from app_paths import resolve_resource
+        initial_dir = resolve_resource("assets", "icon_packs")
         if item.get("type") == "group":
             group_icons_dir = os.path.join(initial_dir, "Carpetas de Colores")
             if os.path.isdir(group_icons_dir):
