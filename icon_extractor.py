@@ -712,7 +712,7 @@ def create_action_icon(action_type, size=128):
             (int(84 * scale), my + int(12 * scale)),
         ], fill=(255, 255, 255, 255))
 
-    elif action_type == "app_launcher":
+    elif action_type in ("app_launcher", "launchpad"):
         # macOS Launchpad / App Drawer 3x3 colorful rounded tiles on dark slate
         draw.rounded_rectangle(card_rect, radius=radius, fill=(22, 28, 45, 248), outline=(96, 165, 250, 215), width=max(1, int(2.5 * scale)))
         tile_colors = [
@@ -730,6 +730,17 @@ def create_action_icon(action_type, size=128):
                 ty1 = start + r * (tw + gap)
                 draw.rounded_rectangle([tx1, ty1, tx1 + tw, ty1 + tw], radius=max(2, int(5 * scale)), fill=tile_colors[idx_t])
                 idx_t += 1
+
+    elif action_type == "spotlight":
+        # Spotlight magnifying glass on dark cyan card
+        draw.rounded_rectangle(card_rect, radius=radius, fill=(15, 23, 42, 248), outline=(56, 189, 248, 220), width=max(1, int(2.5 * scale)))
+        cx, cy = int(56 * scale), int(56 * scale)
+        r = int(22 * scale)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(56, 189, 248, 255), width=max(2, int(4 * scale)))
+        # Glass handle
+        hx1, hy1 = int(72 * scale), int(72 * scale)
+        hx2, hy2 = int(98 * scale), int(98 * scale)
+        draw.line([(hx1, hy1), (hx2, hy2)], fill=(248, 250, 252, 255), width=max(3, int(6 * scale)))
 
     else:
         draw.rounded_rectangle(card_rect, radius=radius, fill=(30, 41, 59, 240), outline=(59, 130, 246, 200), width=max(1, int(2 * scale)))
@@ -879,6 +890,76 @@ def restore_original_icon(item, size=128):
         except Exception as e:
             print(f"[IconExtractor] Error saving restored original icon: {e}")
     return ""
+
+
+def normalize_icon_visual_size(pil_img, normalize=True, fill_ratio=0.90, scale_mult=1.0):
+    """
+    Optically standardizes an icon based on its SOLID visible pixels (alpha >= 165,
+    ignoring faint outer drop shadows/glows) so every icon aligns cleanly to the same
+    visual height on the Dockbar, while preserving soft shadows and antialiasing cleanly.
+    """
+    if pil_img is None:
+        return None
+    try:
+        im = pil_img.convert("RGBA") if pil_img.mode != "RGBA" else pil_img
+        w, h = im.size
+        if w <= 0 or h <= 0:
+            return im
+        scale_mult = max(0.60, min(1.35, float(scale_mult or 1.0)))
+        if not normalize and abs(scale_mult - 1.0) < 0.01:
+            return im
+
+        alpha = im.getchannel("A")
+        # Measure the solid visible icon core (ignoring faint drop shadows/glows with alpha < 165)
+        core_bbox = alpha.point(lambda a: 255 if a >= 165 else 0).getbbox()
+        if not core_bbox:
+            core_bbox = alpha.point(lambda a: 255 if a > 24 else 0).getbbox()
+        if not core_bbox:
+            return im
+
+        cx1, cy1, cx2, cy2 = core_bbox
+        core_w = max(1, cx2 - cx1)
+        core_h = max(1, cy2 - cy1)
+        core_cx = (cx1 + cx2) * 0.5
+        core_cy = (cy1 + cy2) * 0.5
+
+        if normalize:
+            target_h = h * max(0.55, min(0.96, float(fill_ratio))) * scale_mult
+            # Match visual height so icons align cleanly along horizontal dock guides,
+            # clamping only if width would exceed the horizontal canvas margin
+            ratio = target_h / float(core_h)
+            max_w_ratio = (w - 4.0) / float(core_w)
+            max_h_ratio = (h - 4.0) / float(core_h)
+            ratio = min(ratio, max_w_ratio, max_h_ratio)
+        else:
+            ratio = scale_mult
+            max_w_ratio = (w - 4.0) / float(core_w)
+            max_h_ratio = (h - 4.0) / float(core_h)
+            ratio = min(ratio, max_w_ratio, max_h_ratio)
+
+        # Resize the full artwork (keeping soft shadows/antialiased edges intact!)
+        full_nw = max(1, int(round(w * ratio)))
+        full_nh = max(1, int(round(h * ratio)))
+        scaled_full = im.resize((full_nw, full_nh), Image.Resampling.LANCZOS)
+
+        # Center the solid core precisely at (w/2, h/2)
+        new_core_cx = core_cx * (full_nw / float(w))
+        new_core_cy = core_cy * (full_nh / float(h))
+        paste_x = int(round((w * 0.5) - new_core_cx))
+        paste_y = int(round((h * 0.5) - new_core_cy))
+
+        out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        # Safely crop source/destination overlap when scaled_full extends slightly beyond canvas
+        src_x1 = max(0, -paste_x)
+        src_y1 = max(0, -paste_y)
+        src_x2 = min(full_nw, w - paste_x)
+        src_y2 = min(full_nh, h - paste_y)
+        if src_x2 > src_x1 and src_y2 > src_y1:
+            region = scaled_full.crop((src_x1, src_y1, src_x2, src_y2))
+            out.alpha_composite(region, (max(0, paste_x), max(0, paste_y)))
+        return out
+    except Exception:
+        return pil_img
 
 
 def get_or_create_icon(item, size=128):

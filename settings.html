@@ -1242,6 +1242,13 @@
       <svg class="ico" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       Widgets de Escritorio
     </button>
+    <div style="margin-left:auto; display:flex; align-items:center; gap:9px; padding-right:4px;" title="Activado: despliega secciones automáticamente al pasar el mouse. Desactivado: solo al hacer clic manual.">
+      <span id="auto-expand-label" style="font-size:12px; font-weight:600; color:var(--text-muted); white-space:nowrap;">Despliegue: Automático</span>
+      <label class="switch" style="transform:scale(0.88); transform-origin:right center;">
+        <input type="checkbox" id="settings_auto_expand_cards" checked onchange="setAutoExpandMode(this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
   </nav>
 
   <div class="scroll-area">
@@ -1366,8 +1373,127 @@
                 <span class="setting-desc">Abre una cuadrícula ligera de solo aplicaciones o el Menú Inicio nativo (tecla Windows)</span>
               </div>
               <div class="radio-group" id="launcher-mode-group">
-                <div class="radio-option" data-lmode="custom" onclick="setLauncherMode('custom')">Drawer macOS</div>
+                <div class="radio-option" data-lmode="custom" onclick="setLauncherMode('custom')">Drawer Flotante</div>
+                <div class="radio-option" data-lmode="fullscreen" onclick="setLauncherMode('fullscreen')">Launchpad macOS</div>
                 <div class="radio-option" data-lmode="windows" onclick="setLauncherMode('windows')">Inicio Windows</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Atajos Globales de Teclado</span>
+                <span class="setting-desc">Atajos de sistema activos en segundo plano para invocar herramientas</span>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+                <div style="font-size:12px; color:var(--text-sec); display:flex; align-items:center; gap:8px;">
+                  <span>Spotlight Universal:</span>
+                  <kbd style="background:#1e2433; border:1px solid #334155; padding:2px 8px; border-radius:6px; font-weight:600; color:#38bdf8;">Win + Alt + Espacio</kbd>
+                </div>
+                <div style="font-size:12px; color:var(--text-sec); display:flex; align-items:center; gap:8px;">
+                  <span>Launchpad Pantalla Completa:</span>
+                  <kbd style="background:#1e2433; border:1px solid #334155; padding:2px 8px; border-radius:6px; font-weight:600; color:#38bdf8;">Win + Alt + A</kbd>
+                </div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Personalización de Launchpad</span>
+                <span class="setting-desc">Ajusta la transparencia de la ventana, tamaño de iconos y tipografía</span>
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Opacidad de Fondo Launchpad</span>
+                <span class="setting-desc">Nivel de semitransparencia de la pantalla</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-lp-opacity">88%</span>
+                <input type="range" id="launchpad_opacity" min="0.40" max="1.0" step="0.02" value="0.88"
+                  oninput="updateLabel('lbl-lp-opacity', Math.round(this.value*100)+'%'); updateSetting('appearance', 'launchpad_opacity', parseFloat(this.value))">
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Iconos Launchpad</span>
+                <span class="setting-desc">Dimensiones de los iconos en la cuadrícula</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-lp-iconsz">72px</span>
+                <input type="range" id="launchpad_icon_size" min="48" max="110" step="4" value="72"
+                  oninput="updateLabel('lbl-lp-iconsz', this.value+'px'); updateSetting('appearance', 'launchpad_icon_size', parseInt(this.value, 10))">
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Etiquetas Launchpad</span>
+                <span class="setting-desc">Tamaño de texto de los nombres de aplicación</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-lp-labelsz">11px</span>
+                <input type="range" id="launchpad_label_size" min="9" max="18" step="1" value="11"
+                  oninput="updateLabel('lbl-lp-labelsz', this.value+'px'); updateSetting('appearance', 'launchpad_label_size', parseInt(this.value, 10))">
+              </div>
+            </div>
+            <div class="setting-row" style="flex-direction:column; align-items:stretch; gap:10px;">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div class="setting-info">
+                  <span class="setting-label">Filtros / Categorías del Launchpad</span>
+                  <span class="setting-desc">Activa, renombra, cambia el color o edita las palabras clave (separadas por coma). También puedes asignar apps con clic derecho dentro del Launchpad.</span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button type="button" class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="addLaunchpadCategory()">+ Nuevo Filtro</button>
+                  <button type="button" class="btn" style="padding:6px 12px; font-size:12px;" onclick="resetLaunchpadCategories()">Restaurar</button>
+                </div>
+              </div>
+              <div id="lp-categories-editor" style="display:flex; flex-direction:column; gap:8px;"></div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Personalización de Spotlight</span>
+                <span class="setting-desc">Controla el ancho y el tamaño de iconos, filas y texto en los resultados de Spotlight</span>
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Ancho de Spotlight</span>
+                <span class="setting-desc">Ancho total de la barra y tarjeta de resultados</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-sp-width">660px</span>
+                <input type="range" id="spotlight_width" min="500" max="1280" step="20" value="660"
+                  oninput="updateLabel('lbl-sp-width', this.value+'px'); updateSetting('appearance', 'spotlight_width', parseInt(this.value, 10))">
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Alto de Fila de Resultados</span>
+                <span class="setting-desc">Altura vertical de cada elemento en la lista de resultados</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-sp-itemh">56px</span>
+                <input type="range" id="spotlight_item_height" min="42" max="120" step="2" value="56"
+                  oninput="updateLabel('lbl-sp-itemh', this.value+'px'); updateSetting('appearance', 'spotlight_item_height', parseInt(this.value, 10))">
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Iconos en Resultados</span>
+                <span class="setting-desc">Dimensiones de los iconos de apps y archivos en Spotlight</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-sp-iconsz">34px</span>
+                <input type="range" id="spotlight_icon_size" min="22" max="88" step="2" value="34"
+                  oninput="updateLabel('lbl-sp-iconsz', this.value+'px'); updateSetting('appearance', 'spotlight_icon_size', parseInt(this.value, 10))">
+              </div>
+            </div>
+            <div class="setting-row sub-row">
+              <div class="setting-info">
+                <span class="setting-label">Tamaño de Texto en Resultados</span>
+                <span class="setting-desc">Tamaño de letra del título y subtítulo de cada resultado</span>
+              </div>
+              <div class="range-control">
+                <span class="range-val" id="lbl-sp-fontsz">13px</span>
+                <input type="range" id="spotlight_font_size" min="10" max="28" step="1" value="13"
+                  oninput="updateLabel('lbl-sp-fontsz', this.value+'px'); updateSetting('appearance', 'spotlight_font_size', parseInt(this.value, 10))">
               </div>
             </div>
             <div class="setting-row">
@@ -1441,6 +1567,16 @@
               <input type="range" id="base_icon_size" min="32" max="96" value="48" oninput="updateSetting('appearance', 'base_icon_size', parseInt(this.value)); updateLabel('lbl-size', this.value + ' px')">
               <span class="slider-val" id="lbl-size">48 px</span>
             </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Estandarizar Tamaño de Todos los Iconos</span>
+              <span class="setting-desc">Ajusta automáticamente los márgenes transparentes de cada icono para que todos luzcan del mismo tamaño visual en la Dockbar</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="standardize_icon_sizes" onchange="updateSetting('appearance', 'standardize_icon_sizes', this.checked)">
+              <span class="slider"></span>
+            </label>
           </div>
           <div class="setting-row">
             <div class="setting-info">
@@ -1750,6 +1886,16 @@
               <div class="color-swatch" id="lbl-bg-swatch" title="Color de fondo" onclick="document.getElementById('label_bg_input').click()"></div>
               <input type="color" id="label_fg_input" style="opacity:0; width:0; height:0;" onchange="updateLabelColor('label_fg', 'lbl-fg-swatch', this.value)">
               <div class="color-swatch" id="lbl-fg-swatch" title="Color de texto" onclick="document.getElementById('label_fg_input').click()"></div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Opacidad del Fondo de Etiquetas</span>
+              <span class="setting-desc">Controla la transparencia del recuadro detrás del nombre del icono (0% = solo texto flotante)</span>
+            </div>
+            <div class="slider-container">
+              <input type="range" id="label_bg_opacity" min="0" max="1" step="0.05" value="0.90" oninput="updateSetting('appearance', 'label_bg_opacity', parseFloat(this.value)); updateLabel('lbl-label-op', Math.round(this.value * 100) + '%')">
+              <span class="slider-val" id="lbl-label-op">90%</span>
             </div>
           </div>
           </div>
@@ -2927,9 +3073,26 @@
       }
     }
 
+    let _autoExpandCards = (localStorage.getItem('alioth_auto_expand_cards') !== '0');
+
+    function _syncAutoExpandUI(enabled) {
+      _autoExpandCards = !!enabled;
+      try { localStorage.setItem('alioth_auto_expand_cards', _autoExpandCards ? '1' : '0'); } catch (e) {}
+      const cb = document.getElementById('settings_auto_expand_cards');
+      if (cb) cb.checked = _autoExpandCards;
+      const lbl = document.getElementById('auto-expand-label');
+      if (lbl) lbl.textContent = _autoExpandCards ? 'Despliegue: Automático' : 'Despliegue: Manual';
+    }
+
+    function setAutoExpandMode(enabled) {
+      _syncAutoExpandUI(enabled);
+      updateSetting('general', 'settings_auto_expand_cards', !!enabled);
+    }
+
     function initHoverExpandCards() {
       if (_hoverCardsInitialized) return;
       _hoverCardsInitialized = true;
+      _syncAutoExpandUI(_autoExpandCards);
       document.querySelectorAll('.card.collapsible').forEach(card => {
         card.classList.remove('expanded', 'pinned');
         const headRight = card.querySelector(':scope > .card-title .card-head-right');
@@ -2949,20 +3112,22 @@
         };
 
         card.addEventListener('mouseenter', () => {
+          if (!_autoExpandCards) return;
           cancelClose();
           card.classList.add('expanded');
         });
 
         card.addEventListener('mouseleave', () => {
           cancelClose();
+          if (!_autoExpandCards) return;
           if (card.classList.contains('pinned')) return;
           closeTimer = setTimeout(() => {
-            if (card.classList.contains('pinned')) return;
+            if (!_autoExpandCards || card.classList.contains('pinned')) return;
             const ae = document.activeElement;
             if (ae && card.contains(ae) && (ae.tagName === 'SELECT' || ae.tagName === 'INPUT')) {
               const onBlur = () => {
                 ae.removeEventListener('blur', onBlur);
-                if (!card.matches(':hover') && !card.classList.contains('pinned')) {
+                if (_autoExpandCards && !card.matches(':hover') && !card.classList.contains('pinned')) {
                   card.classList.remove('expanded');
                 }
               };
@@ -2973,8 +3138,7 @@
           }, 90);
         });
 
-        // Clicking ANYWHERE inside a collapsible section keeps it pinned open.
-        // Clicking the header title area when already pinned collapses & unpins it.
+        // Clicking header toggles open/closed; clicking inside body keeps open.
         card.addEventListener('click', (e) => {
           cancelClose();
           const titleEl = card.querySelector(':scope > .card-title');
@@ -2992,10 +3156,20 @@
               }
               return;
             }
-            if (card.classList.contains('pinned')) {
-              card.classList.remove('pinned', 'expanded');
+            if (!_autoExpandCards) {
+              // Manual mode: simple clean toggle on click
+              if (card.classList.contains('expanded')) {
+                card.classList.remove('pinned', 'expanded');
+              } else {
+                card.classList.add('pinned', 'expanded');
+              }
             } else {
-              card.classList.add('pinned', 'expanded');
+              // Auto mode: click pins open, second click collapses
+              if (card.classList.contains('pinned')) {
+                card.classList.remove('pinned', 'expanded');
+              } else {
+                card.classList.add('pinned', 'expanded');
+              }
             }
             return;
           }
@@ -3247,6 +3421,111 @@
       updateSetting('appearance', key, hex);
     }
 
+    const DEFAULT_LP_CATEGORIES = [
+      {id: 'ia', label: 'Inteligencia Artificial', color: '#a855f7', enabled: true, keywords: ['chatgpt','claude','copilot','gemini','perplexity','hermes','deepseek','ollama','codex','cursor','antigravity','arena','openai'], apps: []},
+      {id: 'oficina', label: 'Oficina', color: '#10b981', enabled: true, keywords: ['word','excel','powerpoint','outlook','onenote','access','teams','pdf','acrobat','office','calc','libreoffice','power bi','power apps','power automate'], apps: []},
+      {id: 'internet', label: 'Internet', color: '#3b82f6', enabled: true, keywords: ['chrome','edge','firefox','brave','opera','safari','browser','mail','whatsapp','telegram','discord','zoom','slack','outlook'], apps: []},
+      {id: 'desarrollo', label: 'Desarrollo', color: '#f59e0b', enabled: true, keywords: ['code','visual studio','terminal','powershell','pwsh','cmd','command prompt','git','python','node','docker','cursor','antigravity','odbc','wsl'], apps: []},
+      {id: 'sistema', label: 'Sistema', color: '#94a3b8', enabled: true, keywords: ['configuraci','settings','panel','control','disco','disk','task','administrador','sistema','windows','event','monitor','narrator','narrador','registro','registry','ejecutar'], apps: []}
+    ];
+
+    let _lpCategoriesState = [];
+
+    function _saveLaunchpadCategories() {
+      if (!currentConfig.general) currentConfig.general = {};
+      currentConfig.general.launchpad_categories = _lpCategoriesState;
+      updateSetting('general', 'launchpad_categories', _lpCategoriesState);
+    }
+
+    function renderLaunchpadCategoriesEditor(cats) {
+      const box = document.getElementById('lp-categories-editor');
+      if (!box) return;
+      _lpCategoriesState = (Array.isArray(cats) && cats.length)
+        ? cats.map(c => ({
+            id: String(c.id || c.label || ('cat_' + Math.random().toString(36).slice(2,7))),
+            label: String(c.label || c.id || 'Filtro'),
+            color: String(c.color || '#38bdf8'),
+            enabled: c.enabled !== false,
+            keywords: Array.isArray(c.keywords) ? c.keywords.map(String) : [],
+            apps: Array.isArray(c.apps) ? c.apps.map(String) : []
+          }))
+        : DEFAULT_LP_CATEGORIES.map(c => ({...c, keywords: [...c.keywords], apps: [...c.apps]}));
+
+      box.innerHTML = '';
+      _lpCategoriesState.forEach((cat, idx) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:grid; grid-template-columns:auto 32px 150px 1fr auto; gap:8px; align-items:center; background:rgba(255,255,255,0.03); border:1px solid var(--card-border); border-radius:10px; padding:8px 10px;';
+
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = !!cat.enabled;
+        chk.title = 'Mostrar este filtro en el Launchpad';
+        chk.style.cssText = 'width:16px; height:16px; accent-color:#38bdf8; cursor:pointer;';
+        chk.onchange = () => { _lpCategoriesState[idx].enabled = chk.checked; _saveLaunchpadCategories(); };
+
+        const col = document.createElement('input');
+        col.type = 'color';
+        col.value = cat.color || '#38bdf8';
+        col.title = 'Color del punto del filtro';
+        col.style.cssText = 'width:28px; height:28px; border:none; background:transparent; cursor:pointer; padding:0;';
+        col.onchange = () => { _lpCategoriesState[idx].color = col.value; _saveLaunchpadCategories(); };
+
+        const nameInp = document.createElement('input');
+        nameInp.type = 'text';
+        nameInp.value = cat.label;
+        nameInp.placeholder = 'Nombre del filtro';
+        nameInp.style.cssText = 'background:#151b28; color:var(--text); border:1px solid var(--card-border); border-radius:7px; padding:5px 8px; font-size:12px; font-weight:600; outline:none;';
+        nameInp.onchange = () => {
+          const nv = nameInp.value.trim();
+          if (nv) { _lpCategoriesState[idx].label = nv; _saveLaunchpadCategories(); }
+        };
+
+        const kwInp = document.createElement('input');
+        kwInp.type = 'text';
+        kwInp.value = (cat.keywords || []).join(', ');
+        kwInp.placeholder = 'Palabras clave separadas por coma (ej. word, excel, pdf)';
+        kwInp.style.cssText = 'background:#151b28; color:var(--text-sec); border:1px solid var(--card-border); border-radius:7px; padding:5px 8px; font-size:11.5px; outline:none; min-width:0;';
+        kwInp.onchange = () => {
+          _lpCategoriesState[idx].keywords = kwInp.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+          _saveLaunchpadCategories();
+        };
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Eliminar filtro';
+        delBtn.style.cssText = 'background:rgba(239,68,68,0.14); color:#fca5a5; border:1px solid rgba(239,68,68,0.3); border-radius:7px; width:28px; height:28px; cursor:pointer; font-weight:700;';
+        delBtn.onclick = () => {
+          _lpCategoriesState.splice(idx, 1);
+          _saveLaunchpadCategories();
+          renderLaunchpadCategoriesEditor(_lpCategoriesState);
+        };
+
+        row.append(chk, col, nameInp, kwInp, delBtn);
+        box.appendChild(row);
+      });
+    }
+
+    function addLaunchpadCategory() {
+      const id = 'cat_' + Date.now().toString(36);
+      _lpCategoriesState.push({
+        id,
+        label: 'Nuevo Filtro',
+        color: '#38bdf8',
+        enabled: true,
+        keywords: [],
+        apps: []
+      });
+      _saveLaunchpadCategories();
+      renderLaunchpadCategoriesEditor(_lpCategoriesState);
+    }
+
+    function resetLaunchpadCategories() {
+      _lpCategoriesState = DEFAULT_LP_CATEGORIES.map(c => ({...c, keywords: [...c.keywords], apps: [...c.apps]}));
+      _saveLaunchpadCategories();
+      renderLaunchpadCategoriesEditor(_lpCategoriesState);
+    }
+
     function setLauncherMode(mode) {
       document.querySelectorAll('#launcher-mode-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-lmode') === mode);
@@ -3444,6 +3723,11 @@
       document.querySelectorAll('#launcher-mode-group .radio-option').forEach(el => {
         el.classList.toggle('selected', el.getAttribute('data-lmode') === lMode);
       });
+      if (typeof gen.settings_auto_expand_cards === 'boolean') {
+        _syncAutoExpandUI(gen.settings_auto_expand_cards);
+      }
+      renderLaunchpadCategoriesEditor(gen.launchpad_categories);
+
       const mcEnEl = document.getElementById('media_capsule_enabled');
       if (mcEnEl) mcEnEl.checked = !!gen.media_capsule_enabled;
       const mcAutoHideEl = document.getElementById('media_capsule_auto_hide_idle');
@@ -3510,11 +3794,48 @@
       if (mcAinp) mcAinp.value = mcAcol;
 
       const app = cfg.appearance || {};
+      const lpOp = app.launchpad_opacity ?? 0.88;
+      const lpOpEl = document.getElementById('launchpad_opacity');
+      if (lpOpEl) lpOpEl.value = lpOp;
+      updateLabel('lbl-lp-opacity', Math.round(lpOp * 100) + '%');
+
+      const lpIco = app.launchpad_icon_size ?? 72;
+      const lpIcoEl = document.getElementById('launchpad_icon_size');
+      if (lpIcoEl) lpIcoEl.value = lpIco;
+      updateLabel('lbl-lp-iconsz', lpIco + 'px');
+
+      const lpLbl = app.launchpad_label_size ?? 11;
+      const lpLblEl = document.getElementById('launchpad_label_size');
+      if (lpLblEl) lpLblEl.value = lpLbl;
+      updateLabel('lbl-lp-labelsz', lpLbl + 'px');
+
+      const spW = app.spotlight_width ?? 660;
+      const spWEl = document.getElementById('spotlight_width');
+      if (spWEl) spWEl.value = spW;
+      updateLabel('lbl-sp-width', spW + 'px');
+
+      const spIh = app.spotlight_item_height ?? 56;
+      const spIhEl = document.getElementById('spotlight_item_height');
+      if (spIhEl) spIhEl.value = spIh;
+      updateLabel('lbl-sp-itemh', spIh + 'px');
+
+      const spIco = app.spotlight_icon_size ?? 34;
+      const spIcoEl = document.getElementById('spotlight_icon_size');
+      if (spIcoEl) spIcoEl.value = spIco;
+      updateLabel('lbl-sp-iconsz', spIco + 'px');
+
+      const spFsz = app.spotlight_font_size ?? 13;
+      const spFszEl = document.getElementById('spotlight_font_size');
+      if (spFszEl) spFszEl.value = spFsz;
+      updateLabel('lbl-sp-fontsz', spFsz + 'px');
+
       document.getElementById('edge_offset').value = app.edge_offset ?? 0;
       updateLabel('lbl-edge', (app.edge_offset ?? 0) + ' px');
 
       document.getElementById('base_icon_size').value = app.base_icon_size ?? 48;
       updateLabel('lbl-size', (app.base_icon_size ?? 48) + ' px');
+      const stdIconsEl = document.getElementById('standardize_icon_sizes');
+      if (stdIconsEl) stdIconsEl.checked = !!app.standardize_icon_sizes;
 
       document.getElementById('max_zoom').value = app.max_zoom ?? 1.7;
       updateLabel('lbl-zoom', (app.max_zoom ?? 1.7) + 'x');
@@ -3656,6 +3977,10 @@
       document.getElementById('label_bg_input').value = lbg;
       document.getElementById('lbl-fg-swatch').style.backgroundColor = lfg;
       document.getElementById('label_fg_input').value = lfg;
+      const lBgOp = app.label_bg_opacity ?? 0.90;
+      const lBgOpEl = document.getElementById('label_bg_opacity');
+      if (lBgOpEl) lBgOpEl.value = lBgOp;
+      updateLabel('lbl-label-op', Math.round(parseFloat(lBgOp) * 100) + '%');
 
       // Folder icons & shortcut labels
       const fIconSz = app.folder_icon_size ?? 56;

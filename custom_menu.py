@@ -52,13 +52,12 @@ class CustomMenu:
     _active_menus = set()
 
     # Subtle translucent section band tints (RGBA fill + faint border)
+    # Refined 2-tone monochrome dark-glass section palette (dark / slightly lighter neutral charcoal)
     _BAND_PALETTE = (
-        ((56, 139, 253, 15), (147, 197, 253, 22)),   # Cool Azure
-        ((129, 140, 248, 14), (165, 180, 252, 20)),  # Soft Indigo
-        ((45, 212, 191, 13), (94, 234, 212, 20)),    # Mist Teal
-        ((148, 163, 184, 13), (203, 213, 225, 18)),  # Slate Glass
+        ((255, 255, 255, 4), (255, 255, 255, 16)),    # Tone 1: Deep Charcoal
+        ((255, 255, 255, 16), (255, 255, 255, 28)),   # Tone 2: Elevated Soft Gray
     )
-    _DANGER_BAND = ((239, 68, 68, 15), (248, 113, 113, 24))
+    _DANGER_BAND = ((239, 68, 68, 13), (248, 113, 113, 34))
 
     @classmethod
     def sync_active_count(cls):
@@ -225,6 +224,8 @@ class CustomMenu:
         }
         self.items.append(section_dict)
         return _MenuSection(section_dict)
+
+    add_submenu = add_section
 
     @staticmethod
     def _get_fonts(scale):
@@ -501,19 +502,19 @@ class CustomMenu:
         h = self._cur_h
         s = self.scale
 
-        # 2x supersampled crisp dark glass card
+        # 2x supersampled crisp monochrome translucent dark-glass card (matches Launchpad & Spotlight)
         ss = 2
         hi = Image.new("RGBA", (w * ss, h * ss), (0, 0, 0, 0))
         ImageDraw.Draw(hi).rounded_rectangle(
             [4, 4, w * ss - 5, h * ss - 5],
             radius=self.corner_radius * ss,
-            fill=(18, 21, 28, 244),
-            outline=(255, 255, 255, 50),
+            fill=(22, 23, 27, 202),
+            outline=(255, 255, 255, 52),
             width=2,
         )
         img = hi.resize((w, h), Image.Resampling.LANCZOS)
 
-        # Draw very subtle color-tinted rounded section bands
+        # Draw clean alternating 2-tone monochrome section bands (dark / slightly lighter)
         band_rad = int(9 * s)
         for by1, by2, band_kind in self._section_bands:
             if band_kind == "danger":
@@ -537,11 +538,11 @@ class CustomMenu:
             kind = row["kind"]
             if kind == "separator":
                 sep_y = (y1 + y2) // 2
-                draw.line([(16, sep_y), (w - 16, sep_y)], fill=(255, 255, 255, 22), width=1)
+                draw.line([(16, sep_y), (w - 16, sep_y)], fill=(255, 255, 255, 20), width=1)
 
             elif kind == "header":
                 header_y = (y1 + y2) // 2
-                draw.text((16, header_y), row["label"].upper(), fill=(148, 163, 184, 215), font=font_header, anchor="lm")
+                draw.text((16, header_y), row["label"].upper(), fill=(156, 163, 175, 210), font=font_header, anchor="lm")
 
             elif kind == "section":
                 sec = row["ref"]
@@ -550,8 +551,8 @@ class CustomMenu:
                 item_rect = [11, y1 + 1, w - 11, y2 - 1]
 
                 if is_hovered or is_open_sub:
-                    fill_c = (59, 130, 246, 112) if is_hovered else (59, 130, 246, 52)
-                    out_c = (96, 165, 250, 195) if is_hovered else (96, 165, 250, 115)
+                    fill_c = (255, 255, 255, 34) if is_hovered else (255, 255, 255, 20)
+                    out_c = (255, 255, 255, 62) if is_hovered else (255, 255, 255, 38)
                     alpha_rounded_rect(
                         img,
                         item_rect,
@@ -562,13 +563,13 @@ class CustomMenu:
                     )
 
                 mid_y = (y1 + y2) // 2
-                label_color = (255, 255, 255, 255) if (is_hovered or is_open_sub) else (226, 232, 240, 245)
+                label_color = (255, 255, 255, 255) if (is_hovered or is_open_sub) else (232, 234, 238, 245)
                 draw.text((int(19 * s), mid_y), row["label"], fill=label_color, font=font_sec, anchor="lm")
 
                 # Side flyout chevron indicator (> normally, or < when opened on left edge)
                 cx = w - int(22 * s)
                 cy = mid_y
-                chev_color = (255, 255, 255, 255) if is_hovered else ((96, 165, 250, 255) if is_open_sub else (148, 163, 184, 225))
+                chev_color = (255, 255, 255, 255) if (is_hovered or is_open_sub) else (156, 163, 175, 215)
                 if is_open_sub and self._submenu_side == "left":
                     pts = [(cx + 2.5 * s, cy - 4 * s), (cx - 2.5 * s, cy), (cx + 2.5 * s, cy + 4 * s)]
                 else:
@@ -581,11 +582,11 @@ class CustomMenu:
 
                 if is_hovered:
                     if row.get("danger"):
-                        fill_color = (220, 38, 38, 195)
+                        fill_color = (220, 38, 38, 185)
                         border_color = (248, 113, 113, 210)
                     else:
-                        fill_color = (59, 130, 246, 112)
-                        border_color = (96, 165, 250, 195)
+                        fill_color = (255, 255, 255, 34)
+                        border_color = (255, 255, 255, 62)
                     alpha_rounded_rect(
                         img,
                         item_rect,
@@ -596,9 +597,9 @@ class CustomMenu:
                     )
 
                 if row.get("danger"):
-                    text_color = (255, 255, 255, 255) if is_hovered else (248, 113, 113, 250)
+                    text_color = (255, 255, 255, 255) if is_hovered else (248, 113, 113, 245)
                 else:
-                    text_color = (255, 255, 255, 255) if is_hovered else (226, 232, 240, 245)
+                    text_color = (255, 255, 255, 255) if is_hovered else (232, 234, 238, 245)
 
                 mid_y = (y1 + y2) // 2
                 checked = row.get("checked")
@@ -606,7 +607,7 @@ class CustomMenu:
                 label_x = base_lx
                 if checked is not None:
                     if checked:
-                        check_color = (255, 255, 255, 255) if is_hovered else (96, 165, 250, 255)
+                        check_color = (255, 255, 255, 255) if is_hovered else (226, 232, 240, 255)
                         cx = base_lx
                         cy = mid_y
                         draw.line(

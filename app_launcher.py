@@ -35,6 +35,7 @@ from window_utils import (
     copy_text_to_clipboard,
     share_path_via_email,
     show_file_properties,
+    ask_styled_text,
 )
 
 user32 = ctypes.windll.user32
@@ -423,7 +424,7 @@ class CustomAppLauncher:
         self._modal_open = True
         try:
             default_nm = (app.get("name") or "Apps").strip()
-            gname = simpledialog.askstring(
+            gname = ask_styled_text(
                 "Nueva Carpeta en Dockbar",
                 "Nombre de la carpeta:",
                 initialvalue=f"Carpeta ({default_nm})",

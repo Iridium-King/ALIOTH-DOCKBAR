@@ -13,6 +13,66 @@ from app_paths import app_dir as _app_dir, is_frozen as _is_frozen
 DEFAULT_CONFIG_PATH = os.path.join(_app_dir(), "config.json")
 STARTUP_LINK_NAME = "AliothDockbar.lnk"
 
+DEFAULT_LAUNCHPAD_CATEGORIES = [
+    {
+        "id": "ia",
+        "label": "Inteligencia Artificial",
+        "color": "#a855f7",
+        "enabled": True,
+        "keywords": [
+            "chatgpt", "claude", "copilot", "gemini", "perplexity",
+            "hermes", "deepseek", "ollama", "codex", "cursor", "antigravity", "arena", "openai"
+        ],
+        "apps": [],
+    },
+    {
+        "id": "oficina",
+        "label": "Oficina",
+        "color": "#10b981",
+        "enabled": True,
+        "keywords": [
+            "word", "excel", "powerpoint", "outlook", "onenote",
+            "access", "teams", "pdf", "acrobat", "office", "calc",
+            "libreoffice", "power bi", "power apps", "power automate"
+        ],
+        "apps": [],
+    },
+    {
+        "id": "internet",
+        "label": "Internet",
+        "color": "#3b82f6",
+        "enabled": True,
+        "keywords": [
+            "chrome", "edge", "firefox", "brave", "opera", "safari",
+            "browser", "mail", "whatsapp", "telegram", "discord", "zoom", "slack", "outlook"
+        ],
+        "apps": [],
+    },
+    {
+        "id": "desarrollo",
+        "label": "Desarrollo",
+        "color": "#f59e0b",
+        "enabled": True,
+        "keywords": [
+            "code", "visual studio", "terminal", "powershell", "pwsh", "cmd",
+            "command prompt", "git", "python", "node", "docker", "cursor", "antigravity", "odbc", "wsl"
+        ],
+        "apps": [],
+    },
+    {
+        "id": "sistema",
+        "label": "Sistema",
+        "color": "#94a3b8",
+        "enabled": True,
+        "keywords": [
+            "configuraci", "settings", "panel", "control", "disco", "disk",
+            "task", "administrador", "sistema", "windows", "event", "monitor",
+            "narrator", "narrador", "registro", "registry", "ejecutar"
+        ],
+        "apps": [],
+    },
+]
+
 DEFAULT_CONFIG = {
     "version": "1.0",
     "general": {
@@ -24,7 +84,9 @@ DEFAULT_CONFIG = {
         "locked": False,                     # Lock icons from dragging/removing
         "show_open_windows": False,          # Show unpinned open apps on the dock
         "open_windows_position": "right",    # "left", "center", "right"
-        "launcher_mode": "custom",           # "custom" (macOS-style app drawer) or "windows" (Win Key)
+        "launcher_mode": "custom",           # "custom" (macOS-style app drawer), "fullscreen" (Launchpad), or "windows" (Win Key)
+        "settings_auto_expand_cards": True,  # Auto-expand settings accordion cards on hover vs manual click
+        "launchpad_categories": copy.deepcopy(DEFAULT_LAUNCHPAD_CATEGORIES),
         "media_capsule_enabled": False,      # Centered media player capsule above Dockbar
         "media_capsule_style": "cristal",    # "cristal", "neon", "minimal", "oled", "acrilico", "editorial"
         "media_capsule_scale": 1.0,          # Capsule size scale (0.75 to 1.45)
@@ -46,6 +108,7 @@ DEFAULT_CONFIG = {
     "appearance": {
         "edge_offset": 6,                    # Distance between dock and screen edge (0 to 60px)
         "base_icon_size": 48,                # Normal icon size in pixels (32 to 96)
+        "standardize_icon_sizes": False,     # Optically normalize all dock icons to uniform visual bounds
         "max_zoom": 1.7,                     # Peak wave magnification factor (1.0 to 2.2)
         "wave_radius": 140,                  # Radius of wave influence around cursor
         "icon_spacing": 10,                  # Distance between items
@@ -53,6 +116,14 @@ DEFAULT_CONFIG = {
         "dock_padding_y": 8,                 # Vertical padding inside dock
         "dock_bg_scale": 1.0,                # Independent dock background size/height multiplier (0.40 to 1.50)
         "dock_bg_tilt": 0,                   # Independent 3D perspective tilt of dock background (0 to 40 deg)
+        "launchpad_opacity": 0.88,           # Launchpad background opacity (0.40 to 1.0)
+        "launchpad_icon_size": 72,           # Launchpad icon size (48 to 110 px)
+        "launchpad_label_size": 11,          # Launchpad app text size (9 to 18 px)
+        "launchpad_label_color": "#f1f5f9",  # Launchpad app text color
+        "spotlight_width": 660,              # Spotlight width (520 to 960 px)
+        "spotlight_item_height": 56,         # Spotlight result row height (42 to 84 px)
+        "spotlight_icon_size": 34,           # Spotlight result icon size (22 to 56 px)
+        "spotlight_font_size": 13,           # Spotlight result title font size (10 to 18 px)
         "corner_radius": 20,                 # Pill rounded corners
         "round_all_corners": True,           # Round bottom corners even at 0px edge offset
         "bg_color": "#181a20",               # Dock background color (Hex)

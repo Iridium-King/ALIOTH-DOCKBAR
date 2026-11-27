@@ -488,7 +488,8 @@ def query_windows_search_index(query_str, limit=12):
             f"WHERE (System.FileExtension = '.exe' OR System.FileExtension = '.lnk') "
             f"AND System.ItemName LIKE '%{q_safe}%'"
         )
-        rs = conn.Execute(sql)
+        res = conn.Execute(sql)
+        rs = res[0] if isinstance(res, tuple) else res
         while not rs.EOF:
             iname = rs.Fields(0).Value
             ipath = rs.Fields(1).Value
@@ -500,6 +501,69 @@ def query_windows_search_index(query_str, limit=12):
                     "icon_src": str(ipath),
                     "source": "Índice de Windows"
                 })
+            rs.MoveNext()
+        rs.Close()
+        conn.Close()
+    except Exception:
+        pass
+    return results
+
+
+def _item_url_to_path(item_url, fallback_display=""):
+    """Converts a Windows Search System.ItemUrl ('file:C:/Users/...') into a real Windows path."""
+    u = str(item_url or "").strip()
+    if u.lower().startswith("file:"):
+        raw = u[5:]
+        if raw.startswith("///"):
+            raw = raw[3:]
+        elif raw.startswith("//"):
+            # UNC path //server/share
+            raw = "\\\\" + raw[2:]
+        return raw.replace("/", "\\")
+    return str(fallback_display or "").strip()
+
+
+def query_windows_files_index(query_str, limit=8):
+    """Queries native Windows Search (SystemIndex) for matching local files & folders using real filesystem paths."""
+    results = []
+    if not HAS_WIN32COM or not query_str or len(query_str.strip()) < 2:
+        return results
+    q_safe = query_str.strip().replace("'", "''")
+    try:
+        pythoncom.CoInitialize()
+        conn = win32com.client.Dispatch("ADODB.Connection")
+        conn.Open('Provider=Search.CollatorDSO;Extended Properties="Application=Windows";')
+        sql = (
+            f"SELECT TOP {limit * 4} System.ItemName, System.ItemUrl, System.ItemPathDisplay "
+            f"FROM SystemIndex "
+            f"WHERE System.ItemName LIKE '%{q_safe}%' "
+            f"AND System.ItemUrl LIKE 'file:%'"
+        )
+        res = conn.Execute(sql)
+        rs = res[0] if isinstance(res, tuple) else res
+        seen = set()
+        while not rs.EOF and len(results) < limit:
+            iname = rs.Fields(0).Value
+            iurl = rs.Fields(1).Value
+            idisp = rs.Fields(2).Value
+            real_path = _item_url_to_path(iurl, idisp)
+            if iname and real_path:
+                low_p = real_path.lower()
+                if (
+                    low_p not in seen
+                    and not low_p.endswith((".dll", ".sys", ".mui", ".cat", ".tmp", ".lnk", ".etl", ".log"))
+                    and os.path.exists(real_path)
+                ):
+                    seen.add(low_p)
+                    is_dir = os.path.isdir(real_path)
+                    results.append({
+                        "name": str(iname),
+                        "target": real_path,
+                        "args": "",
+                        "icon_src": real_path,
+                        "is_dir": is_dir,
+                        "source": "Carpeta" if is_dir else "Archivo"
+                    })
             rs.MoveNext()
         rs.Close()
         conn.Close()

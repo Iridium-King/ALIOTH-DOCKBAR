@@ -4004,10 +4004,11 @@ class PwaWidget(BaseDesktopWidget):
         self._render()
 
     def _add_pwa_dialog(self):
-        name = simpledialog.askstring("Añadir Web App", "Nombre de la aplicación:", parent=self.window)
+        from window_utils import ask_styled_text
+        name = ask_styled_text("Añadir Web App", "Nombre de la aplicación:", parent=self.window)
         if not name or not name.strip():
             return
-        url = simpledialog.askstring("Añadir Web App", "URL (ej. https://claude.ai):", parent=self.window)
+        url = ask_styled_text("Añadir Web App", "URL (ej. https://claude.ai):", parent=self.window)
         if url and url.strip():
             apps = list(self.get_cfg("apps", []))
             apps.append({"id": str(uuid.uuid4())[:8], "name": name.strip(), "url": url.strip()})

@@ -836,3 +836,271 @@ def show_file_properties(path):
         return False
 
 
+def create_desktop_shortcut(target, name="", args=""):
+    """
+    Creates a native Windows .lnk shortcut on the user's Desktop using COM IShellLink
+    (zero WScript.Shell, zero PowerShell). Returns the created .lnk path or "".
+    """
+    raw = os.path.expandvars((target or "").strip().strip('"')).strip()
+    if not raw:
+        return ""
+    try:
+        import re
+        import pythoncom
+        from win32com.shell import shell, shellcon
+
+        pythoncom.CoInitialize()
+        desktop_dir = shell.SHGetFolderPath(0, shellcon.CSIDL_DESKTOPDIRECTORY, None, 0)
+        if not desktop_dir or not os.path.isdir(desktop_dir):
+            return ""
+
+        base = (name or "").strip()
+        if not base:
+            base = os.path.splitext(os.path.basename(raw.rstrip("\\/")))[0] or "Acceso directo"
+        safe_base = re.sub(r'[<>:"/\\|?*]+', "_", base).strip(" .") or "Acceso directo"
+
+        lnk_path = os.path.join(desktop_dir, f"{safe_base}.lnk")
+        idx = 2
+        while os.path.exists(lnk_path):
+            lnk_path = os.path.join(desktop_dir, f"{safe_base} ({idx}).lnk")
+            idx += 1
+
+        link = pythoncom.CoCreateInstance(
+            shell.CLSID_ShellLink,
+            None,
+            pythoncom.CLSCTX_INPROC_SERVER,
+            shell.IID_IShellLink,
+        )
+        link.SetPath(raw)
+        if args:
+            link.SetArguments(str(args))
+        work_dir = os.path.dirname(raw) if os.path.isfile(raw) else (raw if os.path.isdir(raw) else "")
+        if work_dir and os.path.isdir(work_dir):
+            link.SetWorkingDirectory(work_dir)
+        link.SetDescription(base)
+
+        pf = link.QueryInterface(pythoncom.IID_IPersistFile)
+        pf.Save(lnk_path, 0)
+        return lnk_path
+    except Exception as e:
+        print(f"[WindowUtils] create_desktop_shortcut error: {e}")
+        return ""
+
+
+def ask_styled_text(title, prompt, initialvalue="", parent=None, ok_text="Guardar", cancel_text="Cancelar"):
+    """
+    Modern monochrome dark-glass modal text prompt matching Alioth Dockbar's
+    Launchpad / Spotlight / CustomMenu aesthetic (replaces legacy Tk simpledialog.askstring).
+    Returns entered string or None if cancelled.
+    """
+    from PIL import Image, ImageDraw, ImageTk
+
+    result = [None]
+    created_root = False
+    master = parent
+    if master is None:
+        master = getattr(tk, "_default_root", None)
+    if master is None:
+        master = tk.Tk()
+        master.withdraw()
+        created_root = True
+
+    W, H = 430, 184
+    KEY_HEX = "#010203"
+    KEY_RGB = (1, 2, 3)
+    CARD_RGBA = (29, 30, 34, 255)
+    ENTRY_HEX = "#2b2d33"
+    ENTRY_RGBA = (43, 45, 51, 255)
+
+    dlg = tk.Toplevel(master)
+    dlg.title(title or "")
+    dlg.overrideredirect(True)
+    dlg.attributes("-topmost", True)
+    dlg.attributes("-transparentcolor", KEY_HEX)
+    dlg.attributes("-alpha", 0.94)
+    dlg.configure(bg=KEY_HEX)
+
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    px = (sw - W) // 2
+    py = int((sh - H) * 0.42)
+    dlg.geometry(f"{W}x{H}+{px}+{py}")
+
+    top_hwnd = set_tool_window(dlg, owner_hwnd=None, layered=False, no_activate=False)
+
+    canvas = tk.Canvas(dlg, width=W, height=H, bg=KEY_HEX, highlightthickness=0, bd=0)
+    canvas.place(x=0, y=0, width=W, height=H)
+
+    var = tk.StringVar(master=dlg, value=str(initialvalue or ""))
+    entry = tk.Entry(
+        dlg,
+        textvariable=var,
+        bg=ENTRY_HEX,
+        fg="#f8fafc",
+        insertbackground="#ffffff",
+        selectbackground="#525866",
+        selectforeground="#ffffff",
+        bd=0,
+        highlightthickness=0,
+        relief=tk.FLAT,
+        font=("Segoe UI", 12),
+    )
+    entry.place(x=34, y=82, width=W - 68, height=26)
+
+    state = {"hov": None, "drag": None, "photo": None}
+    btn_cancel = (W - 224, H - 50, W - 126, H - 18)
+    btn_ok = (W - 116, H - 50, W - 22, H - 18)
+    btn_x = (W - 38, 12, W - 12, 38)
+
+    def _render():
+        if not dlg.winfo_exists():
+            return
+        ss = 2
+        hi = Image.new("RGBA", (W * ss, H * ss), (0, 0, 0, 0))
+        hd = ImageDraw.Draw(hi, "RGBA")
+        # Outer dark-glass rounded card
+        hd.rounded_rectangle(
+            [2, 2, W * ss - 3, H * ss - 3],
+            radius=36,
+            fill=CARD_RGBA,
+            outline=(255, 255, 255, 85),
+            width=2,
+        )
+        # Header divider
+        hd.line([(44, 90), ((W - 22) * ss, 90)], fill=(255, 255, 255, 22), width=2)
+        # Rounded Search-style input pill with crisp WHITE border
+        hd.rounded_rectangle(
+            [44, 150, (W - 22) * ss, 232],
+            radius=40,
+            fill=ENTRY_RGBA,
+            outline=(255, 255, 255, 225),
+            width=3,
+        )
+        # Close (X) circular button
+        cx2, cy2 = (W - 25) * ss, 25 * ss
+        if state["hov"] == "x":
+            hd.ellipse([cx2 - 22, cy2 - 22, cx2 + 22, cy2 + 22], fill=(64, 68, 78, 255))
+        hd.line([(cx2 - 8, cy2 - 8), (cx2 + 8, cy2 + 8)], fill=(212, 214, 220, 255), width=3)
+        hd.line([(cx2 + 8, cy2 - 8), (cx2 - 8, cy2 + 8)], fill=(212, 214, 220, 255), width=3)
+
+        # Cancel pill button
+        c1, c2, c3, c4 = [v * ss for v in btn_cancel]
+        c_fill = (62, 65, 74, 255) if state["hov"] == "cancel" else (46, 48, 56, 255)
+        hd.rounded_rectangle([c1, c2, c3, c4], radius=30, fill=c_fill, outline=(255, 255, 255, 55), width=2)
+
+        # Primary OK pill button (crisp white)
+        o1, o2, o3, o4 = [v * ss for v in btn_ok]
+        o_fill = (255, 255, 255, 255) if state["hov"] == "ok" else (238, 240, 244, 255)
+        hd.rounded_rectangle([o1, o2, o3, o4], radius=30, fill=o_fill)
+
+        im = hi.resize((W, H), Image.Resampling.LANCZOS)
+        d = ImageDraw.Draw(im, "RGBA")
+        f_title = resolve_styled_font("Segoe UI", 12, bold=True)
+        f_prompt = resolve_styled_font("Segoe UI", 10)
+        f_btn = resolve_styled_font("Segoe UI", 10, bold=True)
+
+        d.text((22, 25), str(title or ""), font=f_title, fill=(248, 250, 252, 255), anchor="lm")
+        d.text((24, 60), str(prompt or ""), font=f_prompt, fill=(161, 165, 174, 255), anchor="lm")
+        d.text(((btn_cancel[0] + btn_cancel[2]) // 2, (btn_cancel[1] + btn_cancel[3]) // 2), cancel_text, font=f_btn, fill=(228, 230, 236, 255), anchor="mm")
+        d.text(((btn_ok[0] + btn_ok[2]) // 2, (btn_ok[1] + btn_ok[3]) // 2), ok_text, font=f_btn, fill=(18, 19, 23, 255), anchor="mm")
+
+        flat = flatten_pil_for_colorkey(im, key_rgb=KEY_RGB, alpha_threshold=64)
+        state["photo"] = ImageTk.PhotoImage(flat, master=dlg)
+        canvas.delete("all")
+        canvas.create_image(0, 0, image=state["photo"], anchor="nw")
+
+    def _hit(x, y):
+        for name, (x1, y1, x2, y2) in (("ok", btn_ok), ("cancel", btn_cancel), ("x", btn_x)):
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return name
+        return None
+
+    def _confirm(_e=None):
+        result[0] = var.get()
+        try:
+            dlg.destroy()
+        except Exception:
+            pass
+
+    def _cancel(_e=None):
+        result[0] = None
+        try:
+            dlg.destroy()
+        except Exception:
+            pass
+
+    def _on_motion(e):
+        h = _hit(e.x, e.y)
+        if h != state["hov"]:
+            state["hov"] = h
+            canvas.configure(cursor="hand2" if h else "")
+            _render()
+
+    def _on_press(e):
+        h = _hit(e.x, e.y)
+        if h == "ok":
+            _confirm()
+        elif h in ("cancel", "x"):
+            _cancel()
+        elif e.y <= 46:
+            state["drag"] = (e.x_root - dlg.winfo_x(), e.y_root - dlg.winfo_y())
+        else:
+            entry.focus_set()
+
+    def _on_drag(e):
+        if state["drag"]:
+            dx, dy = state["drag"]
+            dlg.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
+
+    def _on_release(_e):
+        state["drag"] = None
+
+    canvas.bind("<Motion>", _on_motion)
+    canvas.bind("<Button-1>", _on_press)
+    canvas.bind("<B1-Motion>", _on_drag)
+    canvas.bind("<ButtonRelease-1>", _on_release)
+    dlg.bind("<Escape>", _cancel)
+    entry.bind("<Escape>", _cancel)
+    entry.bind("<Return>", _confirm)
+
+    _render()
+
+    def _focus_now():
+        if not dlg.winfo_exists():
+            return
+        try:
+            kernel32 = ctypes.windll.kernel32
+            fg = user32.GetForegroundWindow()
+            cur_tid = kernel32.GetCurrentThreadId()
+            fg_tid = user32.GetWindowThreadProcessId(fg, None) if fg else 0
+            attached = bool(user32.AttachThreadInput(fg_tid, cur_tid, True)) if (fg_tid and fg_tid != cur_tid) else False
+            try:
+                hwnd = top_hwnd or user32.GetAncestor(dlg.winfo_id(), GA_ROOT) or dlg.winfo_id()
+                user32.SetForegroundWindow(hwnd)
+            finally:
+                if attached:
+                    user32.AttachThreadInput(fg_tid, cur_tid, False)
+        except Exception:
+            pass
+        try:
+            dlg.lift()
+            dlg.focus_force()
+            entry.focus_set()
+            entry.select_range(0, tk.END)
+            entry.icursor(tk.END)
+        except Exception:
+            pass
+
+    dlg.after(20, _focus_now)
+    dlg.grab_set()
+    dlg.wait_window()
+    if created_root:
+        try:
+            master.destroy()
+        except Exception:
+            pass
+    return result[0]
+
+
+
+

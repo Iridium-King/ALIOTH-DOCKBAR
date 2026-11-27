@@ -172,12 +172,30 @@ def run_dock():
         dock.root.destroy()
         return True
 
+    # Global Hotkey Manager (Spotlight & Launchpad)
+    hotkey_mgr = None
+    try:
+        from hotkey_manager import GlobalHotkeyManager
+        hotkey_mgr = GlobalHotkeyManager(
+            on_spotlight=lambda: ui_queue.put(lambda: dock_ref[0] and dock_ref[0].toggle_spotlight()),
+            on_launchpad=lambda: ui_queue.put(lambda: dock_ref[0] and dock_ref[0].toggle_launchpad())
+        )
+        hotkey_mgr.start()
+        print("[Alioth Dockbar] Hotkey Manager iniciado.")
+    except Exception as e:
+        print(f"[Alioth Dockbar] Nota al registrar hotkeys: {e}")
+
     # Widgets reuse this process while retaining independent desktop windows.
     try:
         _sync_widgets()
         dock.root.mainloop()
         return getattr(dock, 'user_wants_exit', False)
     finally:
+        if hotkey_mgr:
+            try:
+                hotkey_mgr.stop()
+            except Exception:
+                pass
         _before_close()
         settings_server.stop_server()
         if not dock.user_wants_exit:

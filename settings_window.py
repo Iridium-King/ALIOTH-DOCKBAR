@@ -667,7 +667,8 @@ class SettingsWindow:
         if it.get("type") == "separator":
             return
 
-        new_name = simpledialog.askstring("Renombrar", f"Introduce el nuevo nombre para '{it.get('name', '')}':", initialvalue=it.get("name", ""), parent=self.root)
+        from window_utils import ask_styled_text
+        new_name = ask_styled_text("Renombrar", f"Introduce el nuevo nombre para '{it.get('name', '')}':", initialvalue=it.get("name", ""), parent=self.root)
         if new_name is not None and new_name.strip():
             it["name"] = new_name.strip()
             self.config_mgr.update_item(it["id"], {"name": new_name.strip()})

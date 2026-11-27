@@ -28,6 +28,7 @@ from window_utils import (
     copy_text_to_clipboard,
     share_path_via_email,
     show_file_properties,
+    ask_styled_text,
 )
 
 user32 = ctypes.windll.user32
@@ -983,7 +984,7 @@ class GroupFlyout:
             self.window.lift()
         self.modal_open = True
         try:
-            new_name = simpledialog.askstring("Cambiar Nombre", "Nuevo nombre del elemento:", initialvalue=old_name, parent=self.window)
+            new_name = ask_styled_text("Cambiar Nombre", "Nuevo nombre del elemento:", initialvalue=old_name, parent=self.window)
         finally:
             self.modal_open = False
             self.mouse_was_released = False
@@ -1068,7 +1069,7 @@ class GroupFlyout:
             self.window.lift()
         self.modal_open = True
         try:
-            new_name = simpledialog.askstring("Renombrar Carpeta", "Nuevo nombre de la carpeta:", initialvalue=old_name, parent=self.window)
+            new_name = ask_styled_text("Renombrar Carpeta", "Nuevo nombre de la carpeta:", initialvalue=old_name, parent=self.window)
         finally:
             self.modal_open = False
             self.mouse_was_released = False

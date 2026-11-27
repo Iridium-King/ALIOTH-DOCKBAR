@@ -35,6 +35,7 @@ from window_utils import (
     copy_text_to_clipboard,
     share_path_via_email,
     show_file_properties,
+    ask_styled_text,
 )
 
 user32 = ctypes.windll.user32
@@ -513,6 +514,8 @@ class DockWindow:
         self._last_dynamic_sig = ()
         self._pwa_name_cache = {}
         self.active_launcher = None
+        self.active_spotlight = None
+        self.active_launchpad = None
         self._bat_cache = None
         self._bat_cache_ts = 0.0
         self._bat_icon_cache = None
@@ -881,7 +884,7 @@ class DockWindow:
                         self._dynamic_icon_cache[cache_lookup] = cached_ic
                     else:
                         self._dynamic_icon_cache.move_to_end(cache_lookup)
-                    self.icon_cache[dyn_id] = cached_ic
+                    self.icon_cache[dyn_id] = self._apply_item_icon_sizing(cached_ic, it)
                     dyn_list.append(it)
                 active_ids = {it.get('id') for it in self.pinned_items} | {it['id'] for it in dyn_list}
                 for key in list(self.icon_cache):
@@ -1642,6 +1645,23 @@ class DockWindow:
         self.reload_items()
         self.update_geometry()
 
+    def _apply_item_icon_sizing(self, pil_img, item=None):
+        """Applies global optical size standardization and/or per-item scale adjustment."""
+        if pil_img is None:
+            return None
+        std_all = bool(self.config_mgr.get("appearance", "standardize_icon_sizes", False))
+        it = item or {}
+        norm_item = bool(it.get("normalize_icon", False))
+        scale_mult = float(it.get("icon_scale", 1.0) or 1.0)
+        if std_all or norm_item or abs(scale_mult - 1.0) > 0.01:
+            return icon_extractor.normalize_icon_visual_size(
+                pil_img,
+                normalize=(std_all or norm_item),
+                fill_ratio=0.90,
+                scale_mult=scale_mult,
+            )
+        return pil_img
+
     def reload_items(self):
         """Loads pinned items from config, caches icons (including system actions), and merges dynamic open apps."""
         self.pinned_items = self.config_mgr.get_items()
@@ -1662,14 +1682,15 @@ class DockWindow:
                     bname = os.path.basename(ic_p)
                     if ("cache" in ic_p.lower() and "icons" in ic_p.lower()) and not (bname.startswith("v2_") or bname.startswith("custom_")):
                         it["icon_path"] = ""
-                self.icon_cache[it_id] = icon_extractor.get_or_create_icon(it, size=128)
+                raw_ic = icon_extractor.get_or_create_icon(it, size=128)
+                self.icon_cache[it_id] = self._apply_item_icon_sizing(raw_ic, it)
 
         # Re-attach dynamic icons if show_open_windows is active
         if self.config_mgr.get("general", "show_open_windows", False):
             for d_it in self.dynamic_open_items:
                 ek = f"{d_it.get('dyn_key', '')}|{d_it.get('icon_path', '')}"
                 if ek in self._dynamic_icon_cache:
-                    self.icon_cache[d_it["id"]] = self._dynamic_icon_cache[ek]
+                    self.icon_cache[d_it["id"]] = self._apply_item_icon_sizing(self._dynamic_icon_cache[ek], d_it)
         else:
             self.dynamic_open_items = []
             self._last_dynamic_sig = ()
@@ -1902,6 +1923,8 @@ class DockWindow:
         return (px1 - 14 <= pt_x <= px2 + 14) and (env_top <= pt_y <= env_bot)
 
     def _on_mouse_enter(self, event):
+        if getattr(self, "active_launchpad", None) and self.active_launchpad.window and self.active_launchpad.window.winfo_exists():
+            return
         self.mouse_inside_dock = True
         self.is_revealed = True
         if self._wave_cursor_x is None and hasattr(event, "x"):
@@ -1941,7 +1964,6 @@ class DockWindow:
         self.mouse_canvas_pos = (event.x, event.y)
         if self._wave_cursor_x is None:
             self._wave_cursor_x = float(event.x)
-        self._calculate_wave(self._wave_cursor_x, hover_blend=max(0.05, self._wave_hover_blend))
         self._check_hover_flyouts()
 
     def _check_hover_flyouts(self):
@@ -2115,11 +2137,15 @@ class DockWindow:
                 self.hovered_index = None
             return
 
-        # Compute magnification strictly against unzoomed rest centers to guarantee zero positional feedback wobble
+        # Compute magnification strictly against unzoomed rest centers with a pitch-harmonic cosine kernel
+        # so sum(magnification) stays mathematically constant as cursor sweeps between icons (zero tremble!)
         win_w = getattr(self, "dock_w", 600)
         rest_widths = [base_size * self._item_aspect(self.items[i]) for i in range(n)]
         rest_total_w = sum(rest_widths) + max(0, n - 1) * spacing
         rest_x = (win_w - rest_total_w) * 0.5
+        pitch = max(24.0, base_size + spacing)
+        harmonic = max(1, int(round(wave_radius / pitch)))
+        eff_radius = harmonic * pitch
 
         closest_idx = None
         min_dist = float('inf')
@@ -2133,9 +2159,9 @@ class DockWindow:
                 self.target_sizes[i] = base_size
             else:
                 dist = abs(cursor_x - rest_cx)
-                if dist < wave_radius:
-                    u = dist / wave_radius
-                    factor = (0.5 * (1.0 + math.cos(math.pi * u))) ** 1.15
+                if dist < eff_radius:
+                    u = dist / eff_radius
+                    factor = 0.5 * (1.0 + math.cos(math.pi * u))
                     self.target_sizes[i] = base_size * (1.0 + (max_zoom - 1.0) * factor * blend)
                 else:
                     self.target_sizes[i] = base_size
@@ -2230,8 +2256,8 @@ class DockWindow:
                     raw_cx = float(pt_cur.x - getattr(self, "dock_x", 0))
                     if self._wave_cursor_x is None:
                         self._wave_cursor_x = raw_cx
-                    else:
-                        alpha_cur = 1.0 - math.exp(-30.0 * dt)
+                    elif abs(raw_cx - self._wave_cursor_x) > 0.35:
+                        alpha_cur = 1.0 - math.exp(-20.0 * dt)
                         self._wave_cursor_x += (raw_cx - self._wave_cursor_x) * alpha_cur
                 alpha_in = 1.0 - math.exp(-12.5 * dt)
                 self._wave_hover_blend += (1.0 - self._wave_hover_blend) * alpha_in
@@ -2246,11 +2272,11 @@ class DockWindow:
 
             self._calculate_wave(self._wave_cursor_x, hover_blend=self._wave_hover_blend)
 
-            alpha_ease = 1.0 - math.exp(-14.5 * dt)
-            needs_redraw = abs(self._wave_hover_blend - prev_blend) > 0.001 or self._pill_hover_blend != prev_pill_blend
+            alpha_ease = 1.0 - math.exp(-16.0 * dt)
+            needs_redraw = abs(self._wave_hover_blend - prev_blend) > 0.002 or self._pill_hover_blend != prev_pill_blend
             for i in range(n_items):
                 diff = self.target_sizes[i] - self.current_sizes[i]
-                if abs(diff) > 0.04:
+                if abs(diff) > 0.22:
                     self.current_sizes[i] += diff * alpha_ease
                     needs_redraw = True
                 elif self.current_sizes[i] != self.target_sizes[i]:
@@ -3051,6 +3077,8 @@ class DockWindow:
         rest_pad_v = max(4, (dock_pill_h - int(base_size)) // 2)
         for i, it in enumerate(self.items):
             f_size = float(self.current_sizes[i]) if i < len(self.current_sizes) else float(base_size)
+            if abs(f_size - base_size) < 0.25:
+                f_size = float(base_size)
             size = max(12, int(round(f_size)))
             f_item_w = f_widths[i]
             item_w = max(4, int(round(f_item_w)))
@@ -3493,19 +3521,25 @@ class DockWindow:
 
         bg_rgb = hex_to_rgb(bg_hex)
         fg_rgb = hex_to_rgb(fg_hex)
-        bg_rgba = (*bg_rgb, int(255 * bg_opacity))
+        bg_opacity = max(0.0, min(1.0, bg_opacity))
+        bg_a = int(round(255 * bg_opacity))
+        out_a = int(round(55 * bg_opacity))
 
-        # Draw dark rounded badge
-        draw.rounded_rectangle(
-            [lbl_x1, lbl_y1, lbl_x2, lbl_y2],
-            radius=max(6, int(lbl_h * 0.3)),
-            fill=bg_rgba,
-            outline=(255, 255, 255, 55),
-            width=1
-        )
+        # Draw rounded badge only if opacity > 0 (allows fully transparent floating label text!)
+        if bg_a > 2:
+            draw.rounded_rectangle(
+                [lbl_x1, lbl_y1, lbl_x2, lbl_y2],
+                radius=max(6, int(lbl_h * 0.3)),
+                fill=(*bg_rgb, bg_a),
+                outline=(255, 255, 255, out_a) if out_a > 2 else None,
+                width=1 if out_a > 2 else 0,
+            )
         # Geometrically centered horizontally and vertically inside badge
         lbl_cx = (lbl_x1 + lbl_x2) / 2.0
         lbl_cy = (lbl_y1 + lbl_y2) / 2.0
+        if bg_opacity < 0.35:
+            # Subtle shadow so transparent-background labels stay crisp over any wallpaper
+            draw.text((lbl_cx + 1, lbl_cy + 1), text, fill=(0, 0, 0, 175), font=font, anchor="mm")
         draw.text((lbl_cx, lbl_cy), text, fill=(*fg_rgb, 255), font=font, anchor="mm")
 
     # -------------------------------------------------------------
@@ -3928,17 +3962,26 @@ class DockWindow:
             except Exception:
                 pass
 
-        launcher_open = bool(self.active_launcher and self.active_launcher.window and self.active_launcher.window.winfo_exists())
+        launchpad_open = bool(getattr(self, "active_launchpad", None) and self.active_launchpad.window and self.active_launchpad.window.winfo_exists())
+        spotlight_open = bool(getattr(self, "active_spotlight", None) and self.active_spotlight.window and self.active_spotlight.window.winfo_exists())
+        if launchpad_open:
+            # Pause dockbar Z-order/autohide interference while fullscreen Launchpad owns the screen
+            self.edge_check_job = self.root.after(90, self._check_edge_sensor)
+            return
+
+        launcher_open = bool(self.active_launcher and self.active_launcher.window and self.active_launcher.window.winfo_exists()) or spotlight_open
         cursor_over_launcher = False
-        if launcher_open:
-            try:
-                lhwnd = getattr(self.active_launcher, "top_hwnd", None) or self.active_launcher.window.winfo_id()
-                lrect = wintypes.RECT()
-                user32.GetWindowRect(lhwnd, ctypes.byref(lrect))
-                if (lrect.left <= pt.x <= lrect.right) and (lrect.top <= pt.y <= lrect.bottom):
-                    cursor_over_launcher = True
-            except Exception:
-                pass
+        for ov in (self.active_launcher, getattr(self, "active_spotlight", None)):
+            if ov and ov.window and ov.window.winfo_exists():
+                try:
+                    lhwnd = getattr(ov, "top_hwnd", None) or user32.GetAncestor(ov.window.winfo_id(), 2) or ov.window.winfo_id()
+                    lrect = wintypes.RECT()
+                    user32.GetWindowRect(lhwnd, ctypes.byref(lrect))
+                    if (lrect.left <= pt.x <= lrect.right) and (lrect.top <= pt.y <= lrect.bottom):
+                        cursor_over_launcher = True
+                        break
+                except Exception:
+                    pass
 
         # Check if cursor is over active live window preview flyout
         cursor_over_preview = False
@@ -4398,11 +4441,84 @@ class DockWindow:
         except Exception as e:
             print(f"[Dock] Error opening group flyout: {e}")
 
+    def toggle_spotlight(self):
+        """Toggles the Universal Spotlight search bar."""
+        if getattr(self, "active_spotlight", None) and self.active_spotlight.window and self.active_spotlight.window.winfo_exists():
+            try:
+                self.active_spotlight.close()
+            except Exception:
+                pass
+            self.active_spotlight = None
+        else:
+            if getattr(self, "active_launcher", None):
+                try:
+                    self.active_launcher.close()
+                except Exception:
+                    pass
+                self.active_launcher = None
+            if getattr(self, "active_launchpad", None):
+                try:
+                    self.active_launchpad.close()
+                except Exception:
+                    pass
+                self.active_launchpad = None
+            from spotlight_window import UniversalSpotlight
+            def _on_sp_close():
+                self.active_spotlight = None
+            self.active_spotlight = UniversalSpotlight(
+                self.root,
+                on_close=_on_sp_close,
+                config_mgr=self.config_mgr,
+                on_add_to_dock=self._add_app_from_launcher,
+                on_toast=self._show_toast,
+            )
+
+    def toggle_launchpad(self):
+        """Toggles the Fullscreen macOS-style Launchpad."""
+        if getattr(self, "active_launchpad", None) and self.active_launchpad.window and self.active_launchpad.window.winfo_exists():
+            try:
+                self.active_launchpad.close()
+            except Exception:
+                pass
+            self.active_launchpad = None
+        else:
+            if getattr(self, "active_launcher", None):
+                try:
+                    self.active_launcher.close()
+                except Exception:
+                    pass
+                self.active_launcher = None
+            if getattr(self, "active_spotlight", None):
+                try:
+                    self.active_spotlight.close()
+                except Exception:
+                    pass
+                self.active_spotlight = None
+            from launchpad_window import FullscreenLaunchpad
+            def _on_lp_close():
+                self.active_launchpad = None
+            self.active_launchpad = FullscreenLaunchpad(
+                self.root,
+                on_close=_on_lp_close,
+                config_mgr=self.config_mgr,
+                on_add_to_dock=self._add_app_from_launcher,
+                on_open_settings=self.on_open_settings,
+            )
+
     def _execute_system_action(self, action_type, anchor_rect=None):
         try:
-            if action_type == "app_launcher":
+            if action_type == "spotlight":
+                self.toggle_spotlight()
+                return
+            elif action_type == "launchpad":
+                self.toggle_launchpad()
+                return
+            elif action_type == "app_launcher":
                 mode = self.config_mgr.get("general", "launcher_mode", "custom")
-                if mode == "windows":
+                if mode == "fullscreen":
+                    self.toggle_launchpad()
+                    return
+                elif mode == "windows":
                     from app_launcher import open_windows_start_menu
                     open_windows_start_menu()
                 else:
@@ -4552,6 +4668,8 @@ class DockWindow:
         if idx is not None and 0 <= idx < len(self.items):
             item = self.items[idx]
             if item.get("type") == "app":
+                menu.add_header(f"Elemento · {(item.get('name') or 'Aplicación')[:24]}")
+                menu.add_command("Cambiar icono...", lambda: self._pick_custom_icon(item))
                 wins, can_kill = self.get_matching_windows(item)
                 if wins:
                     if len(wins) == 1:
@@ -4573,8 +4691,9 @@ class DockWindow:
                     menu.add_command("Abrir ubicación del archivo", lambda it=item: self._open_file_location(it))
                 self._add_share_submenu(menu, raw_tgt, item.get("name", ""))
 
+                self._add_icon_size_submenu(menu, item)
+
                 sec_item = menu.add_section("Editar y gestionar", expanded=False)
-                sec_item.add_command("Cambiar icono...", lambda: self._pick_custom_icon(item))
                 sec_item.add_command("Restaurar icono original", lambda it=item: self._restore_original_icon(it))
                 sec_item.add_command("Cambiar nombre...", lambda: self._rename_item(item))
                 sec_item.add_separator()
@@ -4594,6 +4713,8 @@ class DockWindow:
                         sec_mv.add_command(f"Carpeta: {gname}", lambda it=item, target_gid=gid: self._move_item_to_existing_group(it, target_gid))
                 menu.add_separator()
             elif item.get("type") == "group":
+                menu.add_header(f"Carpeta · {(item.get('name') or 'Carpeta')[:24]}")
+                menu.add_command("Cambiar icono de carpeta...", lambda: self._pick_custom_icon(item))
                 wins, can_kill = self.get_matching_windows(item)
                 menu.add_command(f"Abrir carpeta {item.get('name')}", lambda: self._open_group_flyout(item, self.item_rects[idx]))
                 if wins:
@@ -4601,8 +4722,9 @@ class DockWindow:
                     if can_kill:
                         menu.add_command("Finalizar tareas de la carpeta", lambda it=item: self.terminate_item_processes(it), danger=True)
 
+                self._add_icon_size_submenu(menu, item)
+
                 sec_grp = menu.add_section("Opciones de carpeta", expanded=False)
-                sec_grp.add_command("Cambiar icono de carpeta...", lambda: self._pick_custom_icon(item))
                 if item.get("icon_path"):
                     sec_grp.add_command("Restaurar icono original de carpeta", lambda it=item: self._restore_original_icon(it))
                 sec_grp.add_command("Renombrar carpeta...", lambda: self._rename_item(item))
@@ -4621,10 +4743,13 @@ class DockWindow:
                         sec_grp_act.add_command(a_lbl, lambda g=gid, t=a_type, n=a_name: self._add_system_action_to_group(g, t, n), danger=a_danger)
                 menu.add_separator()
             elif item.get("type") == "action":
+                menu.add_header(f"Acción · {(item.get('name') or 'Sistema')[:24]}")
+                menu.add_command("Cambiar icono...", lambda: self._pick_custom_icon(item))
                 menu.add_command(f"Ejecutar {item.get('name')}", lambda: self._execute_system_action(item.get("action_type")))
 
+                self._add_icon_size_submenu(menu, item)
+
                 sec_act = menu.add_section("Editar y gestionar", expanded=False)
-                sec_act.add_command("Cambiar icono...", lambda: self._pick_custom_icon(item))
                 if item.get("icon_path"):
                     sec_act.add_command("Restaurar icono original", lambda it=item: self._restore_original_icon(it))
                 sec_act.add_command("Cambiar nombre...", lambda: self._rename_item(item))
@@ -4733,14 +4858,17 @@ class DockWindow:
                 menu.add_command("Quitar separador", lambda: self._remove_item(item), danger=True)
                 menu.add_separator()
 
-        # General Dock options (collapsible sections to keep menu compact)
+        # General Dock options (categorized with clean monochrome headers)
         clicked_empty = not (idx is not None and 0 <= idx < len(self.items))
+        menu.add_header("Añadir")
         sec_add = menu.add_section("Añadir a la Dockbar", expanded=clicked_empty)
         sec_add.add_command("Añadir programa o archivo...", self._add_item_manually)
         sec_add.add_command("Crear nueva carpeta...", self._create_empty_group)
         sec_add.add_command("Widget: Reloj y Fecha en Dockbar", self._add_clock_dock_item)
         sec_add.add_command("Widget: Porcentaje de Batería", self._add_battery_dock_item)
         sec_add.add_command("Botón: Lanzador de Apps (Inicio)", lambda: self._add_system_action("app_launcher", "Aplicaciones"))
+        sec_add.add_command("Botón: Spotlight Universal", lambda: self._add_system_action("spotlight", "Spotlight"))
+        sec_add.add_command("Botón: Launchpad Pantalla Completa", lambda: self._add_system_action("launchpad", "Launchpad"))
         sec_add.add_command("Insertar separador al final", lambda: self._insert_separator(len(self.pinned_items)))
         sec_add.add_separator()
         sec_add.add_command("Botón: Ajustes del Dock", lambda: self._add_system_action("dock_settings", "Ajustes Dock"))
@@ -4757,6 +4885,7 @@ class DockWindow:
                 sec_win.add_command(a_lbl, lambda t=a_type, n=a_name: self._add_system_action(t, n), danger=a_danger)
 
         menu.add_separator()
+        menu.add_header("Dockbar")
         cur_ow_on = bool(self.config_mgr.get("general", "show_open_windows", False))
         cur_owp = (self.config_mgr.get("general", "open_windows_position", "right") or "right").lower()
         sec_ow = menu.add_section("Apps / carpetas abiertas", expanded=False)
@@ -4767,6 +4896,9 @@ class DockWindow:
         sec_ow.add_command("Posición: Derecha", lambda: self._set_open_windows_position("right"), checked=(cur_owp == "right"))
         menu.add_command("Configuración de Alioth Dockbar...", self._open_settings)
 
+        is_std = bool(self.config_mgr.get("appearance", "standardize_icon_sizes", False))
+        menu.add_command("Estandarizar tamaño de todos los iconos", self._toggle_standardize_all_icons, checked=is_std)
+
         is_locked = self.config_mgr.get("general", "locked", False)
         menu.add_command("Bloquear iconos del Dock", self._toggle_lock, checked=is_locked)
 
@@ -4774,6 +4906,72 @@ class DockWindow:
         menu.add_command("Salir de Alioth Dockbar", self.close, danger=True)
 
         menu.show(event.x_root, event.y_root)
+
+    def _add_icon_size_submenu(self, menu, item):
+        """Adds per-item icon size controls + global icon standardization to an item's context menu."""
+        if not item:
+            return
+        cur_scale = float(item.get("icon_scale", 1.0) or 1.0)
+        cur_pct = int(round(cur_scale * 100))
+        is_norm = bool(item.get("normalize_icon", False))
+        is_std_all = bool(self.config_mgr.get("appearance", "standardize_icon_sizes", False))
+
+        sec_sz = menu.add_section(f"Tamaño de este icono ({cur_pct}%)", expanded=False)
+        sec_sz.add_command(
+            "Ajustar al tamaño estándar del Dock",
+            lambda it=item: self._toggle_item_normalize_icon(it),
+            checked=(is_norm or is_std_all),
+        )
+        sec_sz.add_separator()
+        sec_sz.add_command("Aumentar tamaño (+10%)", lambda it=item: self._adjust_item_icon_scale(it, +0.10))
+        sec_sz.add_command("Reducir tamaño (-10%)", lambda it=item: self._adjust_item_icon_scale(it, -0.10))
+        for pct_val in (80, 90, 100, 110, 120):
+            sec_sz.add_command(
+                f"Escala fija: {pct_val}%",
+                lambda it=item, v=pct_val / 100.0: self._set_item_icon_scale(it, v),
+                checked=(abs(cur_scale - (pct_val / 100.0)) < 0.03),
+            )
+        sec_sz.add_separator()
+        sec_sz.add_command(
+            "Estandarizar TODOS los iconos del Dock",
+            self._toggle_standardize_all_icons,
+            checked=is_std_all,
+        )
+
+    def _toggle_item_normalize_icon(self, item):
+        it_id = item.get("id")
+        if not it_id:
+            return
+        new_val = not bool(item.get("normalize_icon", False))
+        self.config_mgr.update_item(it_id, {"normalize_icon": new_val})
+        self.reload_items()
+        self._dirty = True
+        self._render_composite_dock()
+        self._show_toast("Icono estandarizado" if new_val else "Tamaño original restaurado")
+
+    def _adjust_item_icon_scale(self, item, delta):
+        cur = float(item.get("icon_scale", 1.0) or 1.0)
+        self._set_item_icon_scale(item, round(max(0.65, min(1.35, cur + delta)), 2))
+
+    def _set_item_icon_scale(self, item, new_scale):
+        it_id = item.get("id")
+        if not it_id:
+            return
+        clamped = round(max(0.65, min(1.35, float(new_scale))), 2)
+        self.config_mgr.update_item(it_id, {"icon_scale": clamped})
+        self.reload_items()
+        self._dirty = True
+        self._render_composite_dock()
+        self._show_toast(f"Escala del icono: {int(round(clamped * 100))}%")
+
+    def _toggle_standardize_all_icons(self):
+        cur = bool(self.config_mgr.get("appearance", "standardize_icon_sizes", False))
+        new_val = not cur
+        self.config_mgr.set("appearance", "standardize_icon_sizes", new_val)
+        self.reload_items()
+        self._dirty = True
+        self._render_composite_dock()
+        self._show_toast("Todos los iconos estandarizados" if new_val else "Estandarización global desactivada")
 
     def _get_item_index_at(self, x, y):
         for i, rect in enumerate(self.item_rects):
@@ -4869,7 +5067,7 @@ class DockWindow:
         self._render_composite_dock()
 
     def _create_empty_group(self):
-        name = simpledialog.askstring("Nueva Carpeta", "Nombre de la nueva carpeta:", initialvalue="Acciones de Windows")
+        name = ask_styled_text("Nueva Carpeta", "Nombre de la nueva carpeta:", initialvalue="Acciones de Windows", parent=self.root)
         if name is None or not name.strip():
             return
         self.config_mgr.create_group(name=name.strip(), items_list=[])
@@ -4894,7 +5092,7 @@ class DockWindow:
         default_name = "Energía" if item.get("action_type") in ("shutdown_pc", "restart_pc", "logoff_pc", "lock_pc") else (
             "Acciones de Windows" if item.get("type") == "action" else f"Grupo ({item.get('name', 'Apps')})"
         )
-        name = simpledialog.askstring("Nueva Carpeta", "Nombre de la carpeta:", initialvalue=default_name)
+        name = ask_styled_text("Nueva Carpeta", "Nombre de la carpeta:", initialvalue=default_name, parent=self.root)
         if name is None or not name.strip():
             return
         items = self.config_mgr.get_items()
@@ -5003,7 +5201,7 @@ class DockWindow:
                 messagebox.showwarning("Formato no compatible", "No se pudo extraer el icono de este archivo.")
 
     def _rename_item(self, item):
-        new_name = simpledialog.askstring("Cambiar Nombre", "Introduce la nueva etiqueta para este icono:", initialvalue=item.get("name", ""))
+        new_name = ask_styled_text("Cambiar Nombre", "Introduce la nueva etiqueta para este icono:", initialvalue=item.get("name", ""), parent=self.root)
         if new_name is not None and new_name.strip():
             item["name"] = new_name.strip()
             self.config_mgr.update_item(item["id"], {"name": new_name.strip()})
@@ -5062,6 +5260,18 @@ class DockWindow:
             except Exception:
                 pass
             self.active_launcher = None
+        if getattr(self, "active_spotlight", None):
+            try:
+                self.active_spotlight.close()
+            except Exception:
+                pass
+            self.active_spotlight = None
+        if getattr(self, "active_launchpad", None):
+            try:
+                self.active_launchpad.close()
+            except Exception:
+                pass
+            self.active_launchpad = None
         if self.active_flyout:
             try:
                 self.active_flyout.close(animate=False)
