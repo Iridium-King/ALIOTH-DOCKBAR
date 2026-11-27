@@ -455,6 +455,7 @@ class DockWindow:
         self.mouse_canvas_pos = (-1, -1)
         self._wave_cursor_x = None
         self._wave_hover_blend = 0.0
+        self._pill_hover_blend = 0.0
         self._disp_to_pinned = []
         self.drag_target_pin_idx = None
         self._toast_text = ""
@@ -2210,6 +2211,18 @@ class DockWindow:
             dt = min(0.04, max(0.004, now_perf - getattr(self, "_last_anim_time", now_perf)))
             self._last_anim_time = now_perf
 
+            prev_pill_blend = self._pill_hover_blend
+            pill_hovered = self.mouse_inside_dock
+            if self._pill_hover_blend > 0.0:
+                pt_pill = wintypes.POINT()
+                if user32.GetCursorPos(ctypes.byref(pt_pill)):
+                    pill_hovered = self._is_cursor_in_dock_envelope(pt_pill.x, pt_pill.y)
+            pill_target = 1.0 if self.is_revealed and pill_hovered else 0.0
+            pill_alpha = 1.0 - math.exp(-(12.5 if pill_target else 11.0) * dt)
+            self._pill_hover_blend += (pill_target - self._pill_hover_blend) * pill_alpha
+            if abs(pill_target - self._pill_hover_blend) < 0.002:
+                self._pill_hover_blend = pill_target
+
             prev_blend = self._wave_hover_blend
             if self.mouse_inside_dock and self.is_revealed and not CustomMenu.has_active_menu():
                 pt_cur = wintypes.POINT()
@@ -2234,7 +2247,7 @@ class DockWindow:
             self._calculate_wave(self._wave_cursor_x, hover_blend=self._wave_hover_blend)
 
             alpha_ease = 1.0 - math.exp(-14.5 * dt)
-            needs_redraw = abs(self._wave_hover_blend - prev_blend) > 0.001
+            needs_redraw = abs(self._wave_hover_blend - prev_blend) > 0.001 or self._pill_hover_blend != prev_pill_blend
             for i in range(n_items):
                 diff = self.target_sizes[i] - self.current_sizes[i]
                 if abs(diff) > 0.04:
@@ -2257,7 +2270,7 @@ class DockWindow:
                 self._last_hover_rendered = self.hovered_index
                 self._render_composite_dock()
 
-            if is_bouncing or needs_redraw or (0.0 < self._wave_hover_blend < 1.0):
+            if is_bouncing or needs_redraw or (0.0 < self._wave_hover_blend < 1.0) or (0.0 < self._pill_hover_blend < 1.0):
                 tick_ms = 16
             elif is_dragging or self.mouse_inside_dock:
                 tick_ms = 25
@@ -2781,9 +2794,28 @@ class DockWindow:
 
         f_widths = [float(self.current_sizes[i]) * self._item_aspect(self.items[i]) for i in range(num_items)]
         total_content_w = sum(f_widths) + (float(spacing) * max(0, num_items - 1))
+        rest_widths = [base_size * self._item_aspect(it) for it in self.items]
+        rest_content_w = sum(rest_widths) + float(spacing) * max(0, num_items - 1)
+        rest_centers = []
+        rest_x = 0.0
+        for width in rest_widths:
+            rest_centers.append(rest_x + width * 0.5)
+            rest_x += width + float(spacing)
+        max_zoom = float(self.config_mgr.get("appearance", "max_zoom", 1.7))
+        wave_radius = max(24.0, float(self.config_mgr.get("appearance", "wave_radius", 140)))
+        wave_extra = 0.0
+        for center in rest_centers:
+            extra = 0.0
+            for i, item_center in enumerate(rest_centers):
+                if self.items[i].get("type") == "separator":
+                    continue
+                u = min(1.0, abs(center - item_center) / wave_radius)
+                extra += rest_widths[i] * (max_zoom - 1.0) * (0.5 * (1.0 + math.cos(math.pi * u))) ** 1.15
+            wave_extra = max(wave_extra, extra)
+        pill_content_w = rest_content_w + wave_extra * self._pill_hover_blend
         dock_pill_h = max(18, int(round((base_size + (pad_y * 2)) * bg_scale)))
-        tilt_inset = int(round(min(dock_pill_h * 0.72, total_content_w * 0.16) * (bg_tilt / 40.0))) if bg_tilt > 0 else 0
-        dock_pill_w = int(round(total_content_w + (eff_pad_x * 2) + (tilt_inset * 2)))
+        tilt_inset = int(round(min(dock_pill_h * 0.72, pill_content_w * 0.16) * (bg_tilt / 40.0))) if bg_tilt > 0 else 0
+        dock_pill_w = int(round(pill_content_w + (eff_pad_x * 2) + (tilt_inset * 2)))
 
         # Center pill horizontally with symmetric rounding
         pill_x1 = int(round((win_w - dock_pill_w) * 0.5))
